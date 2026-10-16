@@ -114,13 +114,12 @@ void main() {
       expect(xp, 20);
 
       // Correct simulation gives +15
-      const correctSim = true;
-      xp += correctSim ? 15 : 5;
+      int rewardXp(bool correct) => correct ? 15 : 5;
+      xp += rewardXp(true);
       expect(xp, 35);
 
       // Wrong simulation gives +5
-      const wrongSim = false;
-      xp += wrongSim ? 15 : 5;
+      xp += rewardXp(false);
       expect(xp, 40);
     });
   });
