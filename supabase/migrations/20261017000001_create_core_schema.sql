@@ -206,3 +206,4 @@ CREATE INDEX IF NOT EXISTS idx_simulation_attempts_created_at ON public.simulati
 -- Certificates
 CREATE INDEX IF NOT EXISTS idx_certificates_user_status ON public.certificates(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_certificates_cert_number ON public.certificates(certificate_number);
+

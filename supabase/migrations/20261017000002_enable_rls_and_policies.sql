@@ -129,6 +129,30 @@ WITH CHECK (
     status != 'completed'
 );
 
+-- Trigger proteksi: mencegah mutasi user_id atau module_id pada operasi UPDATE
+CREATE OR REPLACE FUNCTION public.protect_module_progress_keys()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    IF NEW.user_id != OLD.user_id THEN
+        RAISE EXCEPTION 'Akses ditolak: user_id pada user_module_progress tidak dapat diubah.' 
+            USING ERRCODE = '42501';
+    END IF;
+    IF NEW.module_id != OLD.module_id THEN
+        RAISE EXCEPTION 'Akses ditolak: module_id pada user_module_progress tidak dapat diubah.' 
+            USING ERRCODE = '42501';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trigger_protect_progress_keys ON public.user_module_progress;
+CREATE TRIGGER trigger_protect_progress_keys
+BEFORE UPDATE ON public.user_module_progress
+FOR EACH ROW EXECUTE FUNCTION public.protect_module_progress_keys();
+
 CREATE POLICY progress_delete_own 
 ON public.user_module_progress 
 FOR DELETE 
@@ -181,3 +205,4 @@ TO authenticated
 USING (auth.uid() = user_id);
 
 -- Tidak ada policy INSERT, UPDATE, atau DELETE untuk anon atau authenticated.
+

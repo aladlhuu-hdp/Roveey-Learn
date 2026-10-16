@@ -1,6 +1,6 @@
 # Dokumentasi Perancangan Backend Supabase: RooveyLearn
 
-> **Status Dokumen**: Selesai Dirancang (Sprint 2a)  
+> **Status Dokumen**: Selesai Dirancang & Direview (Sprint 2a)  
 > **Source of Truth**: [`PROPOSAL_ROOVEYLEARN.md`](../PROPOSAL%20ROOVEYLEARN.md) (Bab 3.4 & 2.4), [`AUDIT_ROOVEYLEARN.md`](../AUDIT_ROOVEYLEARN.md)  
 > **Target Platform**: Supabase (PostgreSQL 15+, Supabase Auth, Row Level Security)  
 
@@ -128,7 +128,7 @@ erDiagram
         uuid id PK
         uuid user_id FK "Unique active per user"
         text certificate_number UK "ROOVEY-YYYYMMDD-XXXXXX"
-        uuid assessment_result_id FK "Hasil asesmen final kelulusan"
+        uuid assessment_result_id FK "Hasil asesmen final kelulusan (Best Score)"
         int final_score "Nilai akhir (>= 80)"
         text status "active / revoked"
         timestamptz issued_at
@@ -168,7 +168,7 @@ erDiagram
 - `content` (TEXT, NOT NULL): Isi konten lengkap materi pembelajaran.
 - `takeaway` (TEXT, NULLABLE): Ringkasan penutup bab.
 - `media_type` (TEXT, NOT NULL): Jenis media (`text`, `image`, `video`, `animation`).
-- `media_url` (TEXT, NULLABLE): URL berkas media (misalnya dari Supabase Storage atau CDN).
+- `media_url` (TEXT, NULLABLE): URL berkas media.
 - `order_index` (INT, NOT NULL): Urutan bab di dalam modul (Unique constraint per module).
 - `status` (TEXT, NOT NULL): Status tayang (`published`, `draft`).
 
@@ -187,7 +187,7 @@ erDiagram
 
 ### 3.5 `quiz_answers` *(Tabel Khusus Keamanan / Protected)*
 *Tabel pelindung kunci jawaban dan pembahasan ilmiah. Terisolasi dari akses REST klien.*
-> **Alasan & Justifikasi Desain**: Memisahkan kolom kunci jawaban dari `quiz_questions` menjamin bahwa query apa pun yang dilakukan oleh klien (`supabase.from('quiz_questions').select('*')`) secara fisik **mustahil** membocorkan jawaban benar. PostgREST tidak mengizinkan role `anon` maupun `authenticated` membaca tabel ini. Hanya prosedur penilaian `submit_quiz()` di database yang dapat membacanya.
+> **Alasan & Justifikasi Desain**: Memisahkan kolom kunci jawaban dari `quiz_questions` menjamin bahwa query apa pun yang dilakukan oleh klien (`supabase.from('quiz_questions').select('*')`) secara fisik **mustahil** membocorkan jawaban benar. PostgREST tidak mengizinkan role `anon` maupun `authenticated` membaca tabel ini (`REVOKE ALL`). Hanya prosedur penilaian `submit_quiz()` di database yang dapat membacanya.
 - `question_id` (UUID, PK, FK): Terhubung 1:1 ke `quiz_questions(id)` (`ON DELETE CASCADE`).
 - `correct_option_index` (INT, NOT NULL): Indeks jawaban benar (0, 1, 2, atau 3).
 - `explanation` (TEXT, NOT NULL): Uraian penjelasan mengapa jawaban tersebut benar.
@@ -202,6 +202,7 @@ erDiagram
 - `started_at` (TIMESTAMPTZ, NOT NULL): Waktu modul mulai dibuka.
 - `completed_at` (TIMESTAMPTZ, NULLABLE): Waktu modul diselesaikan secara resmi.
 - *Unique Constraint*: `(user_id, module_id)`.
+- *Integritas Kunci (Poin f)*: Dilindungi trigger `protect_module_progress_keys()` agar `user_id` dan `module_id` tidak dapat dimutasi pada operasi `UPDATE`.
 
 ### 3.7 `assessment_results`
 *Riwayat penilaian kuis dan evaluasi formal.*
@@ -209,8 +210,8 @@ erDiagram
 - `user_id` (UUID, FK, NOT NULL): ID peserta didik.
 - `assessment_type` (TEXT, NOT NULL): `'pretest'`, `'module'`, atau `'final'`.
 - `module_id` (INT, FK, NULLABLE): Modul terkait jika bertipe kuis modul.
-- `score` (INT, NOT NULL): Skor hasil akhir ($0 - 100$).
-- `total_questions` (INT, NOT NULL): Total soal yang dijawab.
+- `score` (INT, NOT NULL): Skor hasil akhir ($0 - 100$). Dihitung proporsional terhadap total soal di bank.
+- `total_questions` (INT, NOT NULL): Total soal yang tersedia di bank untuk kuis terkait.
 - `correct_answers` (INT, NOT NULL): Jumlah soal yang dijawab benar.
 - `is_passed` (BOOLEAN, NOT NULL): Status kelulusan ($true$ jika skor $\ge 80\%$, pre-test selalu dianggap tuntas).
 - `attempt_number` (INT, NOT NULL): Nomor urut percobaan untuk kuis terkait ($1, 2, 3, \dots$).
@@ -235,7 +236,7 @@ erDiagram
 - `id` (UUID, PK): Pengenal unik sertifikat.
 - `user_id` (UUID, FK, NOT NULL): ID pemilik sertifikat.
 - `certificate_number` (TEXT, UNIQUE, NOT NULL): Nomor unik sertifikat (`ROOVEY-YYYYMMDD-XXXXXX`).
-- `assessment_result_id` (UUID, FK, NOT NULL): Kaitan ke hasil asesmen akhir yang memenuhi syarat.
+- `assessment_result_id` (UUID, FK, NOT NULL): Terhubung ke lembar hasil asesmen akhir **terbaik** yang memenuhi syarat (Keputusan 1).
 - `final_score` (INT, NOT NULL): Nilai akhir kelulusan ($\ge 80$).
 - `status` (TEXT, NOT NULL): `'active'` atau `'revoked'`.
 - `issued_at` (TIMESTAMPTZ, NOT NULL): Waktu resmi sertifikat diterbitkan.
@@ -257,17 +258,33 @@ Tabel berikut mendefinisikan secara eksplisit hak akses per operasi (CRUD) untuk
 | `learning_materials` | `anon`, `authenticated` (published) | Ditolak | Ditolak | Ditolak | Mode tamu dapat membaca seluruh materi terbuka. |
 | `quiz_questions` | `anon`, `authenticated` (active) | Ditolak | Ditolak | Ditolak | Hanya menampilkan soal dan opsi, tanpa kunci. |
 | `quiz_answers` | **DITOLAK SEMUA** | Ditolak | Ditolak | Ditolak | Terisolasi total dari PostgREST. Hanya dibaca RPC server. |
-| `user_module_progress` | `authenticated` (milik sendiri) | `authenticated` (status != 'completed') | `authenticated` (status != 'completed') | `authenticated` (milik sendiri) | Klien dilarang mengubah status jadi 'completed' langsung. |
+| `user_module_progress` | `authenticated` (milik sendiri) | `authenticated` (status != 'completed') | `authenticated` (status != 'completed') | `authenticated` (milik sendiri) | Klien dilarang mengubah status jadi 'completed' langsung. User/Module ID immutable. |
 | `assessment_results` | `authenticated` (milik sendiri) | **DITOLAK (Hanya RPC)** | Ditolak | Ditolak | Klien tidak bisa memalsukan hasil kuis via REST API. |
 | `simulation_attempts` | `authenticated` (milik sendiri) | `authenticated` (milik sendiri) | Ditolak | Ditolak | Log simulasi bersifat *append-only* (immutable audit). |
 | `certificates` | `authenticated` (milik sendiri) | **DITOLAK (Hanya RPC)** | Ditolak | Ditolak | Penerbitan hanya lewat validasi ketat `issue_certificate()`. |
 
 ---
 
-## 5. Alur Logika Server (RPC Workflows)
+## 5. Matriks Hak Eksekusi Prosedur (RPC Function Privileges - Poin a)
 
-### 5.1 Alur Penilaian Kuis Terisolasi (`submit_quiz`)
-Mencegah kecurangan dengan melakukan evaluasi dan pemberian umpan balik hanya setelah pengguna mengirimkan lembar jawaban.
+Seluruh fungsi yang mengubah data sensitif dibuat dengan `SECURITY DEFINER` dan hak eksekusinya dibatasi secara ketat:
+
+| Nama Fungsi | Return Type | Role `anon` | Role `authenticated` | Role `PUBLIC` | Parameter `search_path` |
+|---|---|---|---|---|---|
+| `handle_new_user()` | `TRIGGER` | **Ditolak** | **Ditolak** | **Ditolak** | `public, pg_temp` |
+| `handle_updated_at()` | `TRIGGER` | **Ditolak** | **Ditolak** | **Ditolak** | `public, pg_temp` |
+| `protect_module_progress_keys()` | `TRIGGER` | **Ditolak** | **Ditolak** | **Ditolak** | `public, pg_temp` |
+| `complete_module(p_module_id)` | `JSONB` | **Ditolak** | **DIIZINKAN (GRANT)** | **Ditolak** | `public, pg_temp` |
+| `submit_quiz(p_quiz_type, ...)` | `JSONB` | **Ditolak** | **DIIZINKAN (GRANT)** | **Ditolak** | `public, pg_temp` |
+| `issue_certificate()` | `JSONB` | **Ditolak** | **DIIZINKAN (GRANT)** | **Ditolak** | `public, pg_temp` |
+| `verify_certificate(p_cert_number)` | `JSONB` | **DIIZINKAN** | **DIIZINKAN** | **Ditolak** | `public, pg_temp` |
+
+---
+
+## 6. Alur Logika Server (RPC Workflows)
+
+### 6.1 Alur Penilaian Kuis Terisolasi (`submit_quiz`)
+Mencegah kecurangan, menghitung skor dari total soal di bank, menegakkan prasyarat 5 modul untuk final kuis, dan menerapkan rate limit 3 percobaan per 24 jam.
 
 ```mermaid
 sequenceDiagram
@@ -287,14 +304,27 @@ sequenceDiagram
     
     User->>PostgREST: POST /rpc/submit_quiz (quiz_type, answers_payload)
     PostgREST->>RPC: Eksekusi submit_quiz() dengan auth.uid()
-    RPC->>ATable: Query correct_option_index & explanation
-    Note over RPC: Bandingkan jawaban pengguna vs kunci server
-    Note over RPC: Hitung skor (0..100) & cek kelulusan (>= 80%)
+    
+    alt quiz_type = 'final'
+        Note over RPC: Cek apakah seluruh 5 modul sudah 'completed'?
+        alt Belum 5 modul
+            RPC-->>User: ERROR P0001: Selesaikan seluruh 5 modul terlebih dahulu!
+        end
+        Note over RPC: Cek apakah percobaan final dalam 24 jam >= 3?
+        alt Percobaan >= 3
+            RPC-->>User: ERROR P0003: Batas maksimal 3 percobaan per 24 jam tercapai!
+        end
+    end
+
+    Note over RPC: Validasi: Cek ID duplikat & ID soal asing
+    RPC->>QTable: Hitung v_total_bank_questions (jumlah soal di bank)
+    RPC->>ATable: Cocokkan jawaban pengguna vs kunci server
+    Note over RPC: Soal tak dijawab dihitung salah. Hitung score = (correct / total_bank) * 100
     RPC->>RTable: INSERT hasil evaluasi ke assessment_results
     RPC-->>User: Kembalikan JSON (skor, status lulus, & pembahasan soal)
 ```
 
-### 5.2 Alur Penegakan Urutan Modul (`complete_module`)
+### 6.2 Alur Penegakan Urutan Modul (`complete_module`)
 Menjamin pengguna tidak dapat melompati modul secara acak.
 
 ```mermaid
@@ -321,8 +351,8 @@ sequenceDiagram
     end
 ```
 
-### 5.3 Alur Penerbitan Sertifikat Digital (`issue_certificate`)
-Memverifikasi ketiga syarat akademis di sisi server sebelum nomor sertifikat diterbitkan.
+### 6.3 Alur Penerbitan Sertifikat Digital (`issue_certificate`)
+Memverifikasi ketiga syarat akademis di sisi server dan mencatat riwayat asesmen terbaik.
 
 ```mermaid
 sequenceDiagram
@@ -342,12 +372,12 @@ sequenceDiagram
         alt Modul selesai < 5
             RPC-->>User: ERROR: Selesaikan kelima modul pembelajaran wajib!
         else Modul selesai = 5
-            RPC->>Assessment: Ambil nilai asesmen akhir tertinggi / terbaru
-            alt Nilai Asesmen Akhir < 80% (atau belum ada)
-                RPC-->>User: ERROR: Nilai asesmen akhir minimal 80% (Nilai saat ini: X%)!
-            else Nilai Asesmen Akhir >= 80%
+            RPC->>Assessment: Ambil nilai asesmen akhir TERBAIK (score >= 80%)
+            alt Nilai Asesmen Akhir Terbaik < 80% (atau belum ada)
+                RPC-->>User: ERROR: Nilai asesmen akhir minimal 80% (Nilai terbaik saat ini: X%)!
+            else Nilai Asesmen Akhir Terbaik >= 80%
                 Note over RPC: Generate nomor unik: ROOVEY-YYYYMMDD-XXXXXX
-                RPC->>Certs: INSERT sertifikat baru (status = 'active')
+                RPC->>Certs: INSERT sertifikat baru dengan assessment_result_id terbaik
                 RPC-->>User: Sukses! Sertifikat digital resmi diterbitkan
             end
         end
@@ -356,41 +386,34 @@ sequenceDiagram
 
 ---
 
-## 6. Daftar Asumsi & Pertanyaan Keputusan Desain
+## 7. Catatan Konfigurasi Supabase Dashboard & Keputusan Produk
 
-Berikut adalah beberapa aspek perancangan yang memerlukan konfirmasi/keputusan strategis dari pemilik proyek sebelum integrasi kode Flutter dijalankan:
+Berdasarkan keputusan pemilik proyek, berikut panduan konfigurasi yang harus diatur pada Dashboard Supabase saat setup proyek:
 
-1. **Kebijakan Nilai Asesmen Akhir untuk Sertifikat (Terbaik vs. Terakhir)**:
-   - *Desain Saat Ini*: Prosedur `issue_certificate()` memeriksa nilai **terbaik** (`ORDER BY score DESC`) yang dicapai oleh pengguna. Jika pengguna pernah memperoleh nilai $85\%$, lalu mencoba lagi dan mendapat $70\%$, hak sertifikatnya tetap sah berdasarkan nilai terbaiknya.
-   - *Pertanyaan*: Apakah kebijakan ini disetujui, ataukah harus menggunakan nilai **terakhir** (`ORDER BY completed_at DESC`)?
-2. **Konfirmasi Email pada Registrasi Supabase Auth**:
-   - Untuk masyarakat pesisir dengan keterbatasan konektivitas dan literasi email, apakah fitur **"Confirm Email"** di Supabase Auth sebaiknya dinonaktifkan (*disabled*) agar peserta dapat langsung belajar setelah registrasi tanpa perlu membuka kotak masuk email?
-3. **Mekanisme Lupa Kata Sandi**:
-   - Pada aplikasi prototipe lokal, kata sandi yang lupa tidak dapat dipulihkan. Dengan beralih ke Supabase Auth, sistem mendukung *Password Reset Email*. Apakah alur lupa kata sandi via email akan diaktifkan di aplikasi mobile?
-4. **Verifikasi Publik Sertifikat**:
-   - Kami telah menyertakan fungsi RPC `verify_certificate(cert_number)` yang dapat dipanggil oleh pihak luar (misalnya dinas lingkungan hidup, yayasan konservasi, atau pemindai kode QR) untuk mengecek validitas sertifikat tanpa harus login ke aplikasi. Apakah fitur ini akan dimanfaatkan?
-5. **Retensi & Batasan Percobaan Simulasi**:
-   - Saat ini tabel `simulation_attempts` mencatat setiap aksi simulasi tanpa batas. Apakah perlu diterapkan batas maksimum percobaan per hari atau batas retensi log?
+### 7.1 Konfigurasi Supabase Auth: Nonaktifkan Konfirmasi Email (Keputusan 2)
+- **Menu**: `Authentication` $\rightarrow$ `Providers` $\rightarrow$ `Email`.
+- **Pengaturan**: **Matikan (*Disable*) toggle "Confirm email"**.
+- **Tujuan**: Memungkinkan masyarakat pesisir langsung masuk (*auto-confirm*) dan memulai pembelajaran setelah mendaftar tanpa hambatan konfirmasi via email eksternal.
+- **Risiko Keamanan & Mitigasi**:
+  - *Risiko*: Pengguna dapat mendaftarkan alamat email sembarang atau salah ketik.
+  - *Mitigasi*: Akun dibatasi untuk kegiatan pembelajaran lokal; tidak ada transaksi finansial. Jika di masa depan diperlukan pemulihan kata sandi atau pengiriman sertifikat resmi via email, verifikasi email dapat diaktifkan kembali secara bertahap.
+
+### 7.2 Status Fitur Tambahan:
+- **Forgot Password (Keputusan 3)**: Ditunda (*postponed*). Belum diintegrasikan ke alur aplikasi mobile pada fase ini.
+- **Verifikasi Publik Sertifikat (Keputusan 4)**: Fungsi `verify_certificate(cert_number)` dipertahankan untuk pihak luar, namun hasil kembaliannya dibatasi ketat hanya pada informasi publik:
+  - `certificate_number`
+  - `participant_name`
+  - `program_name` ("Dasar Pengelolaan Mangrove")
+  - `issued_at`
+  - `status` ('active')
+  - *Data privat seperti `user_id`, `email`, dan nilai numerik ujian sengaja TIDAK dikembalikan.*
 
 ---
 
-## 7. Rincian Berkas Migrasi Database
+## 8. Rincian Berkas Migrasi Database
 
-Seluruh rancangan backend di atas diwujudkan dalam 4 berkas migrasi SQL berurutan dan 1 berkas verifikasi:
-
-1. [`supabase/migrations/20261017000001_create_core_schema.sql`](file:///home/aladlhusodriniwrad/development/rooveylearn_flutter/supabase/migrations/20261017000001_create_core_schema.sql)
-   - Definisi 8 tabel utama + 1 tabel terproteksi `quiz_answers`.
-   - Primary key, foreign key cascade, check constraints, dan pembuatan indeks performa.
-2. [`supabase/migrations/20261017000002_enable_rls_and_policies.sql`](file:///home/aladlhusodriniwrad/development/rooveylearn_flutter/supabase/migrations/20261017000002_enable_rls_and_policies.sql)
-   - Pengaktifan RLS di seluruh tabel.
-   - Penulisan kebijakan per operasi (`SELECT`, `INSERT`, `UPDATE`, `DELETE`) secara eksplisit.
-   - Isolasi total kunci jawaban dari role klien.
-3. [`supabase/migrations/20261017000003_create_rpc_and_triggers.sql`](file:///home/aladlhusodriniwrad/development/rooveylearn_flutter/supabase/migrations/20261017000003_create_rpc_and_triggers.sql)
-   - Trigger otomatis `handle_new_user()` saat registrasi akun.
-   - Trigger otomatis `handle_updated_at()`.
-   - Prosedur aman `complete_module()`, `submit_quiz()`, `issue_certificate()`, dan `verify_certificate()`.
-4. [`supabase/migrations/20261017000004_seed_initial_data.sql`](file:///home/aladlhusodriniwrad/development/rooveylearn_flutter/supabase/migrations/20261017000004_seed_initial_data.sql)
-   - Seed data 5 modul pembelajaran, materi awal teks, dan 5 butir soal kuis akhir dari kode Flutter asli.
-   - Tagging `TODO` untuk bank soal pre-test dan kuis per modul (dijadwalkan pada Sprint 3).
-5. [`supabase/tests/rls_verification.sql`](file:///home/aladlhusodriniwrad/development/rooveylearn_flutter/supabase/tests/rls_verification.sql)
-   - Script pengujian mandiri 6 skenario keamanan RLS dan RPC di Supabase SQL Editor.
+1. [`supabase/migrations/20261017000001_create_core_schema.sql`](file:///home/aladlhusodriniwrad/development/rooveylearn_flutter/supabase/migrations/20261017000001_create_core_schema.sql): 8 tabel utama, 1 tabel terproteksi `quiz_answers`, dan seluruh indeks performa.
+2. [`supabase/migrations/20261017000002_enable_rls_and_policies.sql`](file:///home/aladlhusodriniwrad/development/rooveylearn_flutter/supabase/migrations/20261017000002_enable_rls_and_policies.sql): Kebijakan RLS eksplisit per operasi, proteksi mutasi key `user_module_progress`.
+3. [`supabase/migrations/20261017000003_create_rpc_and_triggers.sql`](file:///home/aladlhusodriniwrad/development/rooveylearn_flutter/supabase/migrations/20261017000003_create_rpc_and_triggers.sql): Triggers, RPC `complete_module()`, `submit_quiz()`, `issue_certificate()`, `verify_certificate()`, dan penarikan/pemberian hak eksekusi fungsi (`REVOKE`/`GRANT`).
+4. [`supabase/migrations/20261017000004_seed_initial_data.sql`](file:///home/aladlhusodriniwrad/development/rooveylearn_flutter/supabase/migrations/20261017000004_seed_initial_data.sql): Seed data modul 1-5, materi, dan 5 butir soal kuis akhir asli.
+5. [`supabase/tests/rls_verification.sql`](file:///home/aladlhusodriniwrad/development/rooveylearn_flutter/supabase/tests/rls_verification.sql): Suite pengujian 9 skenario keamanan mandiri di SQL Editor.
