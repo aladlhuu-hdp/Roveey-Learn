@@ -1,133 +1,173 @@
-import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
-import '../core/constants/app_constants.dart';
-import '../core/utils/password_hasher.dart';
-import '../models/local_profile.dart';
-
-class LocalAuthException implements Exception {
-  const LocalAuthException(this.message);
-  final String message;
-
-  @override
-  String toString() => message;
-}
+import 'dart:async';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../models/user_profile.dart';
 
 abstract interface class AuthService {
-  Future<LocalProfile?> currentProfile();
-  Future<LocalProfile> register({
+  Future<UserProfile?> currentProfile();
+  Future<UserProfile> register({
     required String name,
     required String email,
     required String password,
   });
-  Future<LocalProfile> signIn({
+  Future<UserProfile> signIn({
     required String email,
     required String password,
   });
-  Future<LocalProfile> updateName(LocalProfile profile, String name);
+  Future<UserProfile> updateName(UserProfile profile, String name);
   Future<void> signOut();
+  Stream<UserProfile?> authStateChanges();
 }
 
-class LocalAuthService implements AuthService {
-  static const String _accountsKey = AppConstants.accountsKey;
-  static const String sessionKey = AppConstants.sessionKey;
+class SupabaseAuthService implements AuthService {
+  SupabaseAuthService([SupabaseClient? client]) : _providedClient = client;
+
+  final SupabaseClient? _providedClient;
+  SupabaseClient get _client => _providedClient ?? Supabase.instance.client;
 
   @override
-  Future<LocalProfile?> currentProfile() async {
-    final prefs = await SharedPreferences.getInstance();
-    final email = prefs.getString(sessionKey);
-    if (email == null) return null;
-    final account = _findAccount(prefs.getStringList(_accountsKey) ?? <String>[], email);
-    return account == null ? null : _profileFrom(account);
+  Future<UserProfile?> currentProfile() async {
+    final session = _client.auth.currentSession;
+    final user = _client.auth.currentUser ?? session?.user;
+    if (user == null) return null;
+
+    try {
+      final data = await _client
+          .from('profiles')
+          .select('id, name, email, created_at')
+          .eq('id', user.id)
+          .maybeSingle();
+
+      if (data != null) {
+        return UserProfile(
+          id: data['id']?.toString() ?? user.id,
+          name: data['name']?.toString() ?? user.userMetadata?['name']?.toString() ?? '',
+          email: data['email']?.toString() ?? user.email ?? '',
+          createdAt: data['created_at']?.toString() ?? user.createdAt,
+        );
+      }
+    } catch (_) {
+      // Fallback to auth metadata if network or profile query fails
+    }
+
+    final metaName = user.userMetadata?['name']?.toString();
+    final fallbackName = (metaName != null && metaName.isNotEmpty)
+        ? metaName
+        : (user.email?.split('@').first ?? 'Pengguna');
+
+    return UserProfile(
+      id: user.id,
+      name: fallbackName,
+      email: user.email ?? '',
+      createdAt: user.createdAt,
+    );
   }
 
   @override
-  Future<LocalProfile> register({
+  Future<UserProfile> register({
     required String name,
     required String email,
     required String password,
   }) async {
-    final prefs = await SharedPreferences.getInstance();
-    final accounts = prefs.getStringList(_accountsKey) ?? <String>[];
-    if (_findAccount(accounts, email) != null) {
-      throw const LocalAuthException('Email ini sudah terdaftar di perangkat. Silakan masuk.');
+    final trimmedName = name.trim();
+    final trimmedEmail = email.trim().toLowerCase();
+
+    final response = await _client.auth.signUp(
+      email: trimmedEmail,
+      password: password,
+      data: <String, dynamic>{'name': trimmedName},
+    );
+
+    final user = response.user;
+    if (user == null) {
+      throw const AuthException('Pendaftaran gagal. Pengguna tidak terbuat.');
     }
-    final salt = PasswordHasher.generateSalt(16);
-    final passwordHash = await PasswordHasher.hashPassword(password: password, salt: salt);
-    final createdAt = DateTime.now().toIso8601String();
-    final normalizedEmail = email.trim().toLowerCase();
-    accounts.add(jsonEncode(<String, String>{
-      'name': name.trim(),
-      'email': normalizedEmail,
-      'createdAt': createdAt,
-      'salt': salt,
-      'passwordHash': passwordHash,
-    }));
-    await prefs.setStringList(_accountsKey, accounts);
-    await prefs.setString(sessionKey, normalizedEmail);
-    return LocalProfile(name: name.trim(), email: normalizedEmail, createdAt: createdAt);
+
+    return UserProfile(
+      id: user.id,
+      name: trimmedName,
+      email: trimmedEmail,
+      createdAt: user.createdAt,
+    );
   }
 
   @override
-  Future<LocalProfile> signIn({
+  Future<UserProfile> signIn({
     required String email,
     required String password,
   }) async {
-    final prefs = await SharedPreferences.getInstance();
-    final account = _findAccount(prefs.getStringList(_accountsKey) ?? <String>[], email);
-    if (account == null) throw const LocalAuthException('Email atau kata sandi tidak cocok.');
-    final passwordHash = await PasswordHasher.hashPassword(
+    final trimmedEmail = email.trim().toLowerCase();
+    final response = await _client.auth.signInWithPassword(
+      email: trimmedEmail,
       password: password,
-      salt: account['salt'] as String,
     );
-    if (!PasswordHasher.constantTimeEquals(passwordHash, account['passwordHash'] as String)) {
-      throw const LocalAuthException('Email atau kata sandi tidak cocok.');
+
+    final user = response.user;
+    if (user == null) {
+      throw const AuthException('Autentikasi gagal.');
     }
-    final normalizedEmail = (account['email'] as String).toLowerCase();
-    await prefs.setString(sessionKey, normalizedEmail);
-    return _profileFrom(account);
+
+    try {
+      final data = await _client
+          .from('profiles')
+          .select('id, name, email, created_at')
+          .eq('id', user.id)
+          .maybeSingle();
+
+      if (data != null) {
+        return UserProfile(
+          id: data['id']?.toString() ?? user.id,
+          name: data['name']?.toString() ?? user.userMetadata?['name']?.toString() ?? '',
+          email: data['email']?.toString() ?? trimmedEmail,
+          createdAt: data['created_at']?.toString() ?? user.createdAt,
+        );
+      }
+    } catch (_) {
+      // Ignore profile fetch failure and fallback to user metadata
+    }
+
+    final metaName = user.userMetadata?['name']?.toString();
+    final fallbackName = (metaName != null && metaName.isNotEmpty)
+        ? metaName
+        : trimmedEmail.split('@').first;
+
+    return UserProfile(
+      id: user.id,
+      name: fallbackName,
+      email: trimmedEmail,
+      createdAt: user.createdAt,
+    );
   }
 
   @override
-  Future<LocalProfile> updateName(LocalProfile profile, String name) async {
-    final prefs = await SharedPreferences.getInstance();
-    final accounts = prefs.getStringList(_accountsKey) ?? <String>[];
-    final index = accounts.indexWhere((record) => _decodeAccount(record)?['email'] == profile.email);
-    if (index < 0) throw const LocalAuthException('Profil lokal tidak ditemukan.');
-    final account = _decodeAccount(accounts[index])!..['name'] = name.trim();
-    accounts[index] = jsonEncode(account);
-    await prefs.setStringList(_accountsKey, accounts);
-    return _profileFrom(account);
+  Future<UserProfile> updateName(UserProfile profile, String name) async {
+    final trimmedName = name.trim();
+    await _client
+        .from('profiles')
+        .update(<String, dynamic>{'name': trimmedName})
+        .eq('id', profile.id);
+
+    try {
+      await _client.auth.updateUser(
+        UserAttributes(data: <String, dynamic>{'name': trimmedName}),
+      );
+    } catch (_) {
+      // Non-fatal if metadata update fails
+    }
+
+    return profile.copyWith(name: trimmedName);
   }
 
   @override
   Future<void> signOut() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(sessionKey);
+    await _client.auth.signOut();
   }
 
-  Map<String, dynamic>? _findAccount(List<String> accounts, String email) {
-    final normalizedEmail = email.trim().toLowerCase();
-    for (final record in accounts) {
-      final account = _decodeAccount(record);
-      if (account?['email'] == normalizedEmail) return account;
-    }
-    return null;
+  @override
+  Stream<UserProfile?> authStateChanges() {
+    return _client.auth.onAuthStateChange.asyncMap((event) async {
+      final user = event.session?.user;
+      if (user == null) return null;
+      return currentProfile();
+    });
   }
-
-  Map<String, dynamic>? _decodeAccount(String record) {
-    try {
-      return Map<String, dynamic>.from(jsonDecode(record) as Map);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  LocalProfile _profileFrom(Map<String, dynamic> account) => LocalProfile(
-        name: account['name'] as String,
-        email: account['email'] as String,
-        createdAt: account['createdAt'] as String,
-      );
 }
-
-/// Kept for backward compatibility with existing tests
-typedef LocalAccountStore = LocalAuthService;

@@ -200,9 +200,9 @@ class CertificateCard extends StatelessWidget {
                 style: const TextStyle(color: AppColors.muted, fontSize: 10)),
             const SizedBox(height: 8),
             const Text(
-              'Sertifikat diterbitkan lokal pada perangkat ini.',
+              'Sertifikat digital resmi terverifikasi server RooveyLearn.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: AppColors.muted, fontSize: 9),
+              style: TextStyle(color: AppColors.muted, fontSize: 9.5),
             ),
           ] else ...<Widget>[
             Row(
@@ -226,7 +226,7 @@ class CertificateCard extends StatelessWidget {
             if (hasProfile) ...<Widget>[
               const SizedBox(height: 7),
               const Text(
-                'Selesaikan kelima modul dan raih nilai post-test minimal 80%.',
+                'Selesaikan kelima modul dan raih nilai asesmen akhir minimal 80%.',
                 style: TextStyle(color: AppColors.muted, fontSize: 11, height: 1.4),
               ),
             ],

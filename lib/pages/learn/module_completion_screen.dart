@@ -7,18 +7,16 @@ class ModuleCompletionScreen extends StatelessWidget {
     super.key,
     required this.module,
     required this.completedCount,
-    required this.xpEarned,
     required this.nextModuleTitle,
   });
 
   final LearningModule module;
   final int completedCount;
-  final int xpEarned;
   final String? nextModuleTitle;
 
   @override
   Widget build(BuildContext context) {
-    final progress = completedCount / learningModules.length;
+    final progress = completedCount / defaultLearningModules.length;
     return Scaffold(
       backgroundColor: AppColors.sand,
       appBar: AppBar(
@@ -67,12 +65,10 @@ class ModuleCompletionScreen extends StatelessWidget {
             Text(module.title,
                 textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineMedium),
             const SizedBox(height: 8),
-            Text(
-              xpEarned > 0
-                  ? 'Pemahamanmu bertambah. Satu langkah lagi menuju pengelolaan mangrove yang lebih baik.'
-                  : 'Kamu telah meninjau kembali materi yang sudah diselesaikan.',
+            const Text(
+              'Pemahamanmu bertambah. Progres belajar telah tersimpan ke sistem.',
               textAlign: TextAlign.center,
-              style: const TextStyle(color: AppColors.muted, fontSize: 12.5, height: 1.5),
+              style: TextStyle(color: AppColors.muted, fontSize: 12.5, height: 1.5),
             ),
             const SizedBox(height: 22),
             Container(
@@ -88,34 +84,10 @@ class ModuleCompletionScreen extends StatelessWidget {
                     child: Column(
                       children: <Widget>[
                         Text(
-                          xpEarned > 0 ? '+$xpEarned' : '+0',
+                          '$completedCount / ${defaultLearningModules.length}',
                           style: const TextStyle(
                             color: AppColors.forest,
-                            fontSize: 24,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        const Text(
-                          'XP DIDAPAT',
-                          style: TextStyle(
-                            color: AppColors.muted,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Container(width: 1, height: 38, color: AppColors.line),
-                  Expanded(
-                    child: Column(
-                      children: <Widget>[
-                        Text(
-                          '$completedCount / ${learningModules.length}',
-                          style: const TextStyle(
-                            color: AppColors.forest,
-                            fontSize: 24,
+                            fontSize: 22,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -139,13 +111,30 @@ class ModuleCompletionScreen extends StatelessWidget {
                           '${(progress * 100).round()}%',
                           style: const TextStyle(
                             color: AppColors.forest,
-                            fontSize: 24,
+                            fontSize: 22,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
                         const SizedBox(height: 3),
                         const Text(
                           'PROGRES JALUR',
+                          style: TextStyle(
+                            color: AppColors.muted,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(width: 1, height: 38, color: AppColors.line),
+                  const Expanded(
+                    child: Column(
+                      children: <Widget>[
+                        Icon(Icons.cloud_done_rounded, color: AppColors.forest, size: 24),
+                        SizedBox(height: 3),
+                        Text(
+                          'TERSIMPAN',
                           style: TextStyle(
                             color: AppColors.muted,
                             fontSize: 9,

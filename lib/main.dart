@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'controllers/app_controller.dart';
+import 'core/config/supabase_config.dart';
 import 'core/theme/app_theme.dart';
 import 'pages/app_shell.dart';
 import 'repositories/learning_repository.dart';
@@ -18,13 +20,20 @@ export 'models/learning_module.dart';
 export 'models/local_profile.dart';
 export 'models/protocol_step.dart';
 export 'models/quiz_question.dart';
+export 'models/user_profile.dart';
 export 'pages/app_shell.dart';
 export 'repositories/learning_repository.dart';
 export 'services/auth_service.dart';
 export 'services/progress_service.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (SupabaseConfig.isConfigured) {
+    await Supabase.initialize(
+      url: SupabaseConfig.url,
+      publishableKey: SupabaseConfig.anonKey,
+    );
+  }
   runApp(const RooveyLearnApp());
 }
 
@@ -45,13 +54,13 @@ class RooveyLearnApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         Provider<AuthService>(
-          create: (_) => authService ?? LocalAuthService(),
+          create: (_) => authService ?? SupabaseAuthService(),
         ),
         Provider<ProgressService>(
-          create: (_) => progressService ?? LocalProgressService(),
+          create: (_) => progressService ?? SupabaseProgressService(),
         ),
         Provider<LearningRepository>(
-          create: (_) => learningRepository ?? const LocalLearningRepository(),
+          create: (_) => learningRepository ?? SupabaseLearningRepository(),
         ),
         ChangeNotifierProvider<AppController>(
           create: (ctx) => AppController(

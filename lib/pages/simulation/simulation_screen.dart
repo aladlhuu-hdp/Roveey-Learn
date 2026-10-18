@@ -159,7 +159,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
                   }
                   Navigator.of(context).pop();
                 },
-                child: Text(correct ? 'Simpan hasil  +15 XP' : 'Selesai simulasi  +5 XP'),
+                child: Text(correct ? 'Simpan hasil' : 'Selesai simulasi'),
               ),
             ),
             const SizedBox(height: 9),

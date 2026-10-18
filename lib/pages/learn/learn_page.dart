@@ -15,6 +15,8 @@ class LearnPage extends StatelessWidget {
     required this.completedModules,
     required this.preTestScore,
     required this.canTakeFinalQuiz,
+    this.isGuest = false,
+    this.isModuleUnlocked,
     required this.onOpenPreTest,
     required this.onOpenModule,
     required this.onOpenQuiz,
@@ -27,6 +29,8 @@ class LearnPage extends StatelessWidget {
   final Set<int> completedModules;
   final int? preTestScore;
   final bool canTakeFinalQuiz;
+  final bool isGuest;
+  final bool Function(int index)? isModuleUnlocked;
   final VoidCallback onOpenPreTest;
   final ValueChanged<int> onOpenModule;
   final VoidCallback onOpenQuiz;
@@ -85,7 +89,7 @@ class LearnPage extends StatelessWidget {
                           ),
                           const SizedBox(height: 5),
                           Text(
-                            '$done dari ${learningModules.length} modul selesai',
+                            '$done dari ${defaultLearningModules.length} modul selesai',
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 16,
@@ -96,7 +100,7 @@ class LearnPage extends StatelessWidget {
                           ClipRRect(
                             borderRadius: BorderRadius.circular(9),
                             child: LinearProgressIndicator(
-                              value: done / learningModules.length,
+                              value: done / defaultLearningModules.length,
                               minHeight: 6,
                               color: AppColors.accentMint,
                               backgroundColor: Colors.white24,
@@ -111,20 +115,20 @@ class LearnPage extends StatelessWidget {
               const SizedBox(height: 24),
               PreTestBanner(score: preTestScore, onTap: onOpenPreTest),
               const SizedBox(height: 22),
-              const SectionHeading(
+              SectionHeading(
                 title: 'Materi pembelajaran',
-                subtitle: 'Modul terbuka secara berurutan setelah pre-test.',
+                subtitle: isGuest
+                    ? 'Tamu dapat membaca seluruh modul secara bebas.'
+                    : 'Modul terbuka secara bertahap sesuai alur belajar.',
               ),
               const SizedBox(height: 13),
-              ...List<Widget>.generate(learningModules.length, (index) {
-                final completed = completedModules.contains(index);
-                final unlocked = completed ||
-                    (index == 0 && (preTestScore != null || completedModules.isNotEmpty)) ||
-                    (index > 0 && completedModules.contains(index - 1));
+              ...List<Widget>.generate(defaultLearningModules.length, (index) {
+                final completed = completedModules.contains(index) || completedModules.contains(index + 1);
+                final unlocked = isGuest || (isModuleUnlocked != null ? isModuleUnlocked!(index) : true);
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 11),
                   child: ModuleCard(
-                    module: learningModules[index],
+                    module: defaultLearningModules[index],
                     index: index,
                     completed: completed,
                     unlocked: unlocked,
@@ -145,7 +149,9 @@ class LearnPage extends StatelessWidget {
                 title: 'Kuis akhir',
                 subtitle: canTakeFinalQuiz
                     ? 'Lima modul selesai · ukur pemahaman kembali'
-                    : 'Selesaikan semua modul untuk membuka post-test.',
+                    : (isGuest
+                        ? 'Masuk ke akun dan selesaikan seluruh modul untuk membuka kuis akhir.'
+                        : 'Selesaikan semua modul untuk membuka asesmen akhir.'),
                 onTap: onOpenQuiz,
                 enabled: canTakeFinalQuiz,
               ),

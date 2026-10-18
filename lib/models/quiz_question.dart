@@ -1,72 +1,128 @@
 class QuizQuestion {
   const QuizQuestion({
-    required this.question,
-    required this.answers,
-    required this.correct,
+    required this.id,
+    required this.quizType,
+    this.moduleId,
+    required this.questionText,
+    required this.options,
+    this.orderIndex = 1,
+    this.isActive = true,
+  });
+
+  final String id;
+  final String quizType;
+  final int? moduleId;
+  final String questionText;
+  final List<String> options;
+  final int orderIndex;
+  final bool isActive;
+
+  String get question => questionText;
+  List<String> get answers => options;
+
+  factory QuizQuestion.fromJson(Map<String, dynamic> json) {
+    final rawOptions = json['options'];
+    List<String> parsedOptions = <String>[];
+    if (rawOptions is List) {
+      parsedOptions = rawOptions.map((e) => e.toString()).toList();
+    }
+
+    return QuizQuestion(
+      id: json['id']?.toString() ?? '',
+      quizType: json['quiz_type']?.toString() ?? 'module',
+      moduleId: json['module_id'] as int?,
+      questionText: json['question_text']?.toString() ?? '',
+      options: parsedOptions,
+      orderIndex: (json['order_index'] as num?)?.toInt() ?? 1,
+      isActive: json['is_active'] as bool? ?? true,
+    );
+  }
+}
+
+class QuizAnswerSubmission {
+  const QuizAnswerSubmission({
+    required this.questionId,
+    required this.selectedOption,
+  });
+
+  final String questionId;
+  final int selectedOption;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'question_id': questionId,
+        'selected_option': selectedOption,
+      };
+}
+
+class QuizEvaluation {
+  const QuizEvaluation({
+    required this.questionId,
+    required this.selectedOption,
+    required this.correctOptionIndex,
+    required this.isCorrect,
     required this.explanation,
   });
 
-  final String question;
-  final List<String> answers;
-  final int correct;
+  final String questionId;
+  final int? selectedOption;
+  final int correctOptionIndex;
+  final bool isCorrect;
   final String explanation;
+
+  factory QuizEvaluation.fromJson(Map<String, dynamic> json) {
+    return QuizEvaluation(
+      questionId: json['question_id']?.toString() ?? '',
+      selectedOption: json['selected_option'] as int?,
+      correctOptionIndex: (json['correct_option_index'] as num?)?.toInt() ?? 0,
+      isCorrect: json['is_correct'] as bool? ?? false,
+      explanation: json['explanation']?.toString() ?? '',
+    );
+  }
 }
 
-const List<QuizQuestion> quizQuestions = <QuizQuestion>[
-  QuizQuestion(
-    question: 'Apa yang membuat mangrove penting bagi ekosistem pesisir?',
-    answers: <String>[
-      'Hanya memperindah pemandangan',
-      'Menyediakan habitat dan membantu menstabilkan sedimen',
-      'Menghilangkan seluruh gelombang laut',
-      'Mengubah air laut menjadi air tawar',
-    ],
-    correct: 1,
-    explanation: 'Mangrove mendukung habitat biota dan membantu menahan sedimen.',
-  ),
-  QuizQuestion(
-    question: 'Apa yang sebaiknya diperiksa sebelum rehabilitasi?',
-    answers: <String>[
-      'Warna seragam relawan',
-      'Jumlah bibit sebanyak-banyaknya',
-      'Kesesuaian lokasi dan kondisi hidrologi',
-      'Desain spanduk kegiatan',
-    ],
-    correct: 2,
-    explanation: 'Kondisi lokasi menentukan jenis dan tindakan yang sesuai.',
-  ),
-  QuizQuestion(
-    question: 'Apa tindakan yang tepat saat banyak bibit mati?',
-    answers: <String>[
-      'Catat kondisi lalu cari penyebabnya',
-      'Tanam ulang tanpa memeriksa',
-      'Berhenti melakukan monitoring',
-      'Pindahkan semua bibit ke laut dalam',
-    ],
-    correct: 0,
-    explanation: 'Mengetahui penyebab membantu tim memilih tindakan perbaikan.',
-  ),
-  QuizQuestion(
-    question: 'Survival rate menunjukkan ...',
-    answers: <String>[
-      'Jumlah jenis ikan yang terlihat',
-      'Tinggi pasang tertinggi',
-      'Jumlah relawan yang hadir',
-      'Persentase bibit yang bertahan hidup',
-    ],
-    correct: 3,
-    explanation: 'Survival rate adalah proporsi bibit hidup dibanding jumlah bibit awal.',
-  ),
-  QuizQuestion(
-    question: 'Apa manfaat monitoring yang konsisten?',
-    answers: <String>[
-      'Menghilangkan kebutuhan merawat bibit',
-      'Membantu mengevaluasi pertumbuhan dan hasil rehabilitasi',
-      'Menjamin semua bibit tumbuh tanpa risiko',
-      'Menggantikan semua observasi lapangan',
-    ],
-    correct: 1,
-    explanation:
-        'Data pengamatan yang konsisten mendukung evaluasi dan keputusan selanjutnya.',
-  ),
-];
+class QuizSubmitResult {
+  const QuizSubmitResult({
+    required this.assessmentId,
+    required this.quizType,
+    this.moduleId,
+    required this.score,
+    required this.totalQuestions,
+    required this.correctAnswers,
+    required this.isPassed,
+    required this.attemptNumber,
+    required this.evaluations,
+  });
+
+  final String assessmentId;
+  final String quizType;
+  final int? moduleId;
+  final int score;
+  final int totalQuestions;
+  final int correctAnswers;
+  final bool isPassed;
+  final int attemptNumber;
+  final List<QuizEvaluation> evaluations;
+
+  factory QuizSubmitResult.fromJson(Map<String, dynamic> json) {
+    final rawEvaluations = json['evaluations'];
+    List<QuizEvaluation> evals = <QuizEvaluation>[];
+    if (rawEvaluations is List) {
+      evals = rawEvaluations
+          .whereType<Map<String, dynamic>>()
+          .map(QuizEvaluation.fromJson)
+          .toList();
+    }
+
+    return QuizSubmitResult(
+      assessmentId: json['assessment_id']?.toString() ?? '',
+      quizType: json['quiz_type']?.toString() ?? '',
+      moduleId: json['module_id'] as int?,
+      score: (json['score'] as num?)?.toInt() ?? 0,
+      totalQuestions: (json['total_questions'] as num?)?.toInt() ?? 0,
+      correctAnswers: (json['correct_answers'] as num?)?.toInt() ?? 0,
+      isPassed: json['is_passed'] as bool? ?? false,
+      attemptNumber: (json['attempt_number'] as num?)?.toInt() ?? 1,
+      evaluations: evals,
+    );
+  }
+}

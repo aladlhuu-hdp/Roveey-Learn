@@ -4,6 +4,7 @@ import '../controllers/app_controller.dart';
 import '../core/constants/app_colors.dart';
 import '../core/constants/app_constants.dart';
 import '../models/learning_module.dart';
+import '../widgets/auth/auth_gate.dart';
 import 'auth/account_profile_screen.dart';
 import 'auth/login_screen.dart';
 import 'auth/welcome_screen.dart';
@@ -49,26 +50,29 @@ class _AppShellState extends State<AppShell> {
 
   void _openLesson(AppController controller, int index) {
     if (!controller.isModuleUnlocked(index)) return;
-    final wasCompleted = controller.completedModules.contains(index);
+    final module = defaultLearningModules[index];
+    final wasCompleted = controller.isModuleCompleted(module.id);
+
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => LessonScreen(
-          module: learningModules[index],
+          module: module,
           alreadyCompleted: wasCompleted,
-          onComplete: () {
-            controller.completeModule(index);
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute<void>(
-                builder: (_) => ModuleCompletionScreen(
-                  module: learningModules[index],
-                  completedCount: controller.completedModules.length,
-                  xpEarned: wasCompleted ? 0 : AppConstants.xpPerModule,
-                  nextModuleTitle: index + 1 < learningModules.length
-                      ? learningModules[index + 1].title
-                      : null,
+          onComplete: () async {
+            await controller.completeModule(module.id);
+            if (mounted) {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute<void>(
+                  builder: (_) => ModuleCompletionScreen(
+                    module: module,
+                    completedCount: controller.completedModules.length,
+                    nextModuleTitle: index + 1 < defaultLearningModules.length
+                        ? defaultLearningModules[index + 1].title
+                        : null,
+                  ),
                 ),
-              ),
-            );
+              );
+            }
           },
         ),
       ),
@@ -79,35 +83,73 @@ class _AppShellState extends State<AppShell> {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => SimulationScreen(
-          onComplete: controller.completeSimulation,
+          onComplete: (correct) {
+            controller.recordSimulation(
+              simulationType: 'decision_making',
+              isSuccess: correct,
+            );
+          },
         ),
       ),
     );
   }
 
   void _openPreTest(AppController controller) {
+    if (!controller.isAuthenticated) {
+      RequireLogin.guard(
+        context,
+        isAuthenticated: false,
+        featureName: 'Pre-test',
+        onAuthenticatedAction: () {},
+        onLoginSuccess: (profile) async {
+          await controller.activateProfile(profile);
+          if (mounted) _openPreTest(controller);
+        },
+      );
+      return;
+    }
+
     if (controller.preTestScore != null) return;
+
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => QuizScreen(
           isPreTest: true,
-          onComplete: controller.completePreTest,
+          onComplete: (_) {},
         ),
       ),
     );
   }
 
   void _openQuiz(AppController controller) {
-    if (!controller.canTakeFinalQuiz) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Selesaikan semua modul sebelum mengikuti kuis akhir.')),
+    if (!controller.isAuthenticated) {
+      RequireLogin.guard(
+        context,
+        isAuthenticated: false,
+        featureName: 'Asesmen Akhir',
+        onAuthenticatedAction: () {},
+        onLoginSuccess: (profile) async {
+          await controller.activateProfile(profile);
+          if (mounted) _openQuiz(controller);
+        },
       );
       return;
     }
+
+    if (!controller.canTakeFinalQuiz) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Selesaikan seluruh 5 modul sebelum mengikuti Asesmen Akhir.'),
+        ),
+      );
+      return;
+    }
+
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => QuizScreen(
-          onComplete: controller.completeQuiz,
+          quizType: 'final',
+          onComplete: (_) {},
         ),
       ),
     );
@@ -140,7 +182,7 @@ class _AppShellState extends State<AppShell> {
             children: <Widget>[
               CircularProgressIndicator(color: AppColors.forest),
               SizedBox(height: 16),
-              Text('Memuat progres belajar...'),
+              Text('Memuat data RooveyLearn...'),
             ],
           ),
         ),
@@ -157,7 +199,6 @@ class _AppShellState extends State<AppShell> {
 
     final pages = <Widget>[
       HomePage(
-        xp: controller.xp,
         completedCount: controller.completedModules.length,
         profileName: controller.profile?.name,
         preTestScore: controller.preTestScore,
@@ -177,6 +218,8 @@ class _AppShellState extends State<AppShell> {
         completedModules: controller.completedModules,
         preTestScore: controller.preTestScore,
         canTakeFinalQuiz: controller.canTakeFinalQuiz,
+        isGuest: !controller.isAuthenticated,
+        isModuleUnlocked: controller.isModuleUnlocked,
         onOpenPreTest: () => _openPreTest(controller),
         onOpenModule: (index) => _openLesson(controller, index),
         onOpenQuiz: () => _openQuiz(controller),
@@ -186,7 +229,6 @@ class _AppShellState extends State<AppShell> {
         onOpenRefractometer: _openRefractometerActivity,
       ),
       ProgressPage(
-        xp: controller.xp,
         completedModules: controller.completedModules,
         exploredCount: controller.exploredTopics.length,
         quizScore: controller.quizScore,
@@ -194,6 +236,8 @@ class _AppShellState extends State<AppShell> {
         profile: controller.profile,
         certificateId: controller.certificateId,
         certificateIssuedAt: controller.certificateIssuedAt,
+        onLogin: () => _openAccount(controller),
+        onClaimCertificate: () => controller.tryIssueCertificate(),
       ),
     ];
 

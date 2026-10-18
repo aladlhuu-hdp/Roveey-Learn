@@ -1,16 +1,17 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 import '../../models/learning_module.dart';
+import '../../widgets/auth/auth_gate.dart';
 import '../../widgets/common/eyebrow.dart';
 import '../../widgets/common/section_heading.dart';
 import 'widgets/home_cards.dart';
 
-export 'widgets/home_cards.dart' show PreTestBanner, QuizBanner, HeroExploreCard, ProgressCard, ActionCard;
+export 'widgets/home_cards.dart'
+    show PreTestBanner, QuizBanner, HeroExploreCard, ProgressCard, ActionCard;
 
 class HomePage extends StatelessWidget {
   const HomePage({
     super.key,
-    required this.xp,
     required this.completedCount,
     required this.profileName,
     required this.preTestScore,
@@ -23,7 +24,6 @@ class HomePage extends StatelessWidget {
     required this.onSimulation,
   });
 
-  final int xp;
   final int completedCount;
   final String? profileName;
   final int? preTestScore;
@@ -35,10 +35,13 @@ class HomePage extends StatelessWidget {
   final VoidCallback onQuiz;
   final VoidCallback onSimulation;
 
+  bool get isGuest => profileName == null || profileName!.isEmpty;
+
   @override
   Widget build(BuildContext context) {
-    final progress = completedCount / learningModules.length;
+    final progress = completedCount / defaultLearningModules.length;
     final firstName = profileName?.trim().split(RegExp(r'\s+')).first;
+
     return CustomScrollView(
       slivers: <Widget>[
         SliverPadding(
@@ -73,7 +76,10 @@ class HomePage extends StatelessWidget {
                         Text(
                           'BELAJAR UNTUK PESISIR',
                           style: TextStyle(
-                              fontSize: 9, color: AppColors.muted, fontWeight: FontWeight.w600),
+                            fontSize: 9,
+                            color: AppColors.muted,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ],
                     ),
@@ -87,10 +93,12 @@ class HomePage extends StatelessWidget {
                     ),
                     child: Row(
                       children: <Widget>[
-                        const Icon(Icons.bolt_rounded, color: AppColors.goldXp, size: 18),
-                        const SizedBox(width: 4),
-                        Text('$xp XP',
-                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+                        const Icon(Icons.check_circle_rounded, color: AppColors.forest, size: 16),
+                        const SizedBox(width: 5),
+                        Text(
+                          '$completedCount/${defaultLearningModules.length} Modul',
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 11.5),
+                        ),
                       ],
                     ),
                   ),
@@ -99,13 +107,13 @@ class HomePage extends StatelessWidget {
                     tooltip: 'Profil',
                     onPressed: onAccount,
                     visualDensity: VisualDensity.compact,
-                    icon: firstName == null || firstName.isEmpty
+                    icon: isGuest
                         ? const Icon(Icons.person_outline_rounded, color: AppColors.forest)
                         : CircleAvatar(
                             radius: 15,
                             backgroundColor: AppColors.surfaceGreen,
                             child: Text(
-                              firstName[0].toUpperCase(),
+                              firstName![0].toUpperCase(),
                               style: const TextStyle(
                                 color: AppColors.forest,
                                 fontSize: 12,
@@ -116,17 +124,22 @@ class HomePage extends StatelessWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 28),
+              const SizedBox(height: 24),
+              if (isGuest) ...<Widget>[
+                GuestBanner(onLogin: onAccount),
+                const SizedBox(height: 18),
+              ],
               const Eyebrow(label: 'BELAJAR UNTUK PESISIR'),
               const SizedBox(height: 5),
               Text(
-                firstName == null || firstName.isEmpty
-                    ? 'Halo, Penjaga Pesisir'
-                    : 'Halo, $firstName',
+                isGuest ? 'Halo, Penjaga Pesisir' : 'Halo, $firstName',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                    color: AppColors.muted, fontSize: 14, fontWeight: FontWeight.w600),
+                  color: AppColors.muted,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               const SizedBox(height: 8),
               Text('Ekosistem sehat,\npesisir tangguh.',
@@ -154,7 +167,9 @@ class HomePage extends StatelessWidget {
               ProgressCard(progress: progress, completedCount: completedCount),
               const SizedBox(height: 25),
               const SectionHeading(
-                  title: 'Pilih aktivitas', subtitle: 'Belajar dengan cara yang berbeda.'),
+                title: 'Pilih aktivitas',
+                subtitle: 'Belajar dengan cara yang berbeda.',
+              ),
               const SizedBox(height: 13),
               Row(
                 children: <Widget>[

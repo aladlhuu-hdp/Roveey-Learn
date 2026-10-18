@@ -32,7 +32,7 @@ abstract final class AppColors {
   static const Color borderGreenMuted = Color(0xFFBFD5A9);
   static const Color borderGreenSoft = Color(0xFFC5DDAE);
   static const Color badgeGreen = Color(0xFFC6DDB9);
-  static const Color goldXp = Color(0xFFB48A23);
+  static const Color goldAccent = Color(0xFFB48A23);
   static const Color cardOutline = Color(0xFFD8E4D6);
   static const Color neutralBorder = Color(0xFFDCE4DF);
 
