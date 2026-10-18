@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/utils/app_error_mapper.dart';
 import '../../services/auth_service.dart';
 import '../../widgets/common/eyebrow.dart';
 import '../../widgets/mangrove_scene/mangrove_scene.dart';
@@ -35,9 +37,9 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
   String? _errorMessage;
 
   @override
-  void initState() {
-    super.initState();
-    _authService = widget.authService ?? LocalAuthService();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _authService = widget.authService ?? context.read<AuthService>();
   }
 
   @override
@@ -71,12 +73,9 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
       if (mounted) {
         Navigator.of(context).popUntil((route) => route.isFirst);
       }
-    } on LocalAuthException catch (e) {
+    } catch (e) {
       if (!mounted) return;
-      setState(() => _errorMessage = e.message);
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _errorMessage = 'Terjadi kesalahan sistem.');
+      setState(() => _errorMessage = AppErrorMapper.toUserMessage(e));
     } finally {
       if (mounted) {
         setState(() => _isSubmitting = false);

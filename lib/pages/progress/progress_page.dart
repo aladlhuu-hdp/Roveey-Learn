@@ -2,18 +2,19 @@ import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 import '../../models/explorer_topic.dart';
 import '../../models/learning_module.dart';
-import '../../models/local_profile.dart';
+import '../../models/user_profile.dart';
+import '../../widgets/auth/auth_gate.dart';
 import '../../widgets/common/eyebrow.dart';
 import '../../widgets/common/note_card.dart';
 import '../../widgets/common/section_heading.dart';
 import 'widgets/progress_cards.dart';
 
-export 'widgets/progress_cards.dart' show LearningImprovementCard, BadgeCard, CertificateCard, certificateDate;
+export 'widgets/progress_cards.dart'
+    show LearningImprovementCard, BadgeCard, CertificateCard, certificateDate;
 
 class ProgressPage extends StatelessWidget {
   const ProgressPage({
     super.key,
-    required this.xp,
     required this.completedModules,
     required this.exploredCount,
     required this.quizScore,
@@ -21,25 +22,57 @@ class ProgressPage extends StatelessWidget {
     required this.profile,
     required this.certificateId,
     required this.certificateIssuedAt,
+    this.onLogin,
+    this.onClaimCertificate,
   });
 
-  final int xp;
   final Set<int> completedModules;
   final int exploredCount;
   final int? quizScore;
   final int? preTestScore;
-  final LocalProfile? profile;
+  final UserProfile? profile;
   final String? certificateId;
   final String? certificateIssuedAt;
+  final VoidCallback? onLogin;
+  final VoidCallback? onClaimCertificate;
 
   @override
   Widget build(BuildContext context) {
-    final progress = completedModules.length / learningModules.length;
-    final certificateUnlocked = completedModules.length == learningModules.length &&
+    if (profile == null) {
+      return Scaffold(
+        body: SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+            children: <Widget>[
+              const Eyebrow(label: 'PERJALANAN BELAJARMU'),
+              const SizedBox(height: 9),
+              Text(
+                'Lihat sejauh\nmana kamu tumbuh.',
+                style: Theme.of(context).textTheme.headlineLarge,
+              ),
+              const SizedBox(height: 25),
+              AuthGatePromptCard(
+                featureName: 'Halaman Progres',
+                onLoginSuccess: (_) async {
+                  if (onLogin != null) onLogin!();
+                },
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final totalModules = defaultLearningModules.length;
+    final progress = completedModules.length / totalModules;
+    final certificateUnlocked = completedModules.length >= totalModules &&
         (quizScore ?? 0) >= 80 &&
-        profile != null &&
         certificateIssuedAt != null &&
         certificateId != null;
+
+    final canClaimCertificate = completedModules.length >= totalModules &&
+        (quizScore ?? 0) >= 80 &&
+        certificateId == null;
 
     return CustomScrollView(
       slivers: <Widget>[
@@ -88,15 +121,18 @@ class ProgressPage extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: <Widget>[
                             Text(
-                              '$xp XP terkumpul',
+                              '${completedModules.length} dari $totalModules modul',
                               style: const TextStyle(
                                 color: AppColors.ink,
                                 fontWeight: FontWeight.w600,
+                                fontSize: 13,
                               ),
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              '${completedModules.length} dari ${learningModules.length} modul',
+                              completedModules.length == totalModules
+                                  ? 'Semua materi selesai'
+                                  : 'Dalam perjalanan',
                               style: const TextStyle(color: AppColors.muted, fontSize: 10),
                             ),
                           ],
@@ -172,7 +208,7 @@ class ProgressPage extends StatelessWidget {
                       title: 'Perawat Mangrove',
                       desc: 'Selesaikan 5 modul',
                       icon: Icons.verified_user_rounded,
-                      unlocked: completedModules.length == learningModules.length,
+                      unlocked: completedModules.length == totalModules,
                     ),
                   ),
                 ],
@@ -186,16 +222,27 @@ class ProgressPage extends StatelessWidget {
               const SizedBox(height: 12),
               CertificateCard(
                 unlocked: certificateUnlocked,
-                hasProfile: profile != null,
+                hasProfile: true,
                 participantName: profile?.name ?? '',
                 quizScore: quizScore,
                 certificateId: certificateId,
                 issuedAt: certificateIssuedAt,
               ),
+              if (canClaimCertificate && onClaimCertificate != null) ...<Widget>[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: onClaimCertificate,
+                    icon: const Icon(Icons.workspace_premium_rounded),
+                    label: const Text('Terbitkan Sertifikat Sekarang'),
+                  ),
+                ),
+              ],
               const SizedBox(height: 22),
               const NoteCard(
                 text:
-                    'Progres belajar disimpan secara lokal di perangkat ini. Data tidak tersinkron ke akun atau perangkat lain.',
+                    'Progres belajar tersimpan aman di akun RooveyLearn. Nilai dan sertifikat diverifikasi resmi oleh server.',
               ),
             ],
           ),

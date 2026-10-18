@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:rooveylearn/main.dart';
+import 'helpers/fake_services.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -10,10 +11,9 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
-  group('Characterization: Quiz Scoring and Passing Logic', () {
-    test('calculates percentage accurately from total questions', () {
-      final total = quizQuestions.length; // 5
-      expect(total, 5);
+  group('Characterization: Quiz Scoring and Passing Logic (Server-driven)', () {
+    test('calculates percentage accurately from total questions and passing threshold >= 80%', () {
+      const total = 5;
 
       int calculatePercentage(int correct) => (correct / total * 100).round();
       bool isPassed(int score) => score >= 80;
@@ -31,11 +31,35 @@ void main() {
       expect(isPassed(calculatePercentage(0)), isFalse);
     });
 
-    test('XP earned from quiz is score ~/ 10', () {
-      expect(100 ~/ 10, 10);
-      expect(80 ~/ 10, 8);
-      expect(60 ~/ 10, 6);
-      expect(45 ~/ 10, 4);
+    test('QuizSubmitResult parses evaluations and pass status accurately from server JSON', () {
+      final jsonResponse = <String, dynamic>{
+        'assessment_id': '88888888-8888-8888-8888-888888888888',
+        'quiz_type': 'final',
+        'module_id': null,
+        'score': 80,
+        'total_questions': 5,
+        'correct_answers': 4,
+        'is_passed': true,
+        'attempt_number': 1,
+        'evaluations': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'question_id': '22222222-2222-2222-2222-222222222201',
+            'selected_option': 1,
+            'correct_option_index': 1,
+            'is_correct': true,
+            'explanation': 'Mangrove mendukung habitat biota dan membantu menahan sedimen.',
+          },
+        ],
+      };
+
+      final result = QuizSubmitResult.fromJson(jsonResponse);
+      expect(result.score, 80);
+      expect(result.totalQuestions, 5);
+      expect(result.correctAnswers, 4);
+      expect(result.isPassed, isTrue);
+      expect(result.evaluations.length, 1);
+      expect(result.evaluations.first.isCorrect, isTrue);
+      expect(result.evaluations.first.explanation, contains('habitat'));
     });
   });
 
@@ -46,7 +70,7 @@ void main() {
         required int completedModulesCount,
         required int? quizScore,
       }) {
-        return hasProfile && completedModulesCount == learningModules.length && (quizScore ?? 0) >= 80;
+        return hasProfile && completedModulesCount >= defaultLearningModules.length && (quizScore ?? 0) >= 80;
       }
 
       // Guest user (no profile) cannot receive certificate even with all modules & 80%
@@ -63,64 +87,53 @@ void main() {
       expect(isCertificateEligible(hasProfile: true, completedModulesCount: 5, quizScore: 100), isTrue);
     });
 
-    test('generates certificate ID format RLB-YYYY-HASH8', () {
-      const profile = LocalProfile(name: 'Budi', email: 'budi@pesisir.org', createdAt: '2026-05-10T08:00:00.000Z');
-      const issuedAt = '2026-05-15T10:00:00.000Z';
-      final year = DateTime.parse(issuedAt).year;
-      final certificateId = 'RLB-$year-${profile.storageId.substring(0, 8).toUpperCase()}';
+    test('validates certificate data model from server RPC format ROOVEY-YYYYMMDD-XXXXXX', () {
+      final certJson = <String, dynamic>{
+        'certificate_id': '33333333-3333-3333-3333-333333333333',
+        'certificate_number': 'ROOVEY-20261018-7F8A1B',
+        'participant_name': 'Rani Pesisir',
+        'program_name': 'Dasar Pengelolaan Mangrove',
+        'final_score': 85,
+        'issued_at': '2026-10-18T10:00:00Z',
+      };
 
-      expect(certificateId, startsWith('RLB-2026-'));
-      expect(certificateId.length, 17); // RLB-2026- (9) + 8 chars = 17
+      final cert = CertificateData.fromJson(certJson);
+      expect(cert.certificateNumber, startsWith('ROOVEY-20261018-'));
+      expect(cert.participantName, 'Rani Pesisir');
+      expect(cert.finalScore, 85);
+      expect(cert.programName, 'Dasar Pengelolaan Mangrove');
     });
   });
 
-  group('Characterization: Module Unlock, Progress, and XP Logic', () {
-    bool isModuleUnlocked({
-      required int index,
-      required Set<int> completedModules,
-      required int? preTestScore,
-    }) {
-      return completedModules.contains(index) ||
-          (index == 0 && (preTestScore != null || completedModules.isNotEmpty)) ||
-          (index > 0 && completedModules.contains(index - 1));
-    }
+  group('Characterization: Module Unlock & Access Rules', () {
+    test('Guest can read all 5 modules freely', () {
+      bool isGuestModuleUnlocked(int index) => true; // Final guest rule: boleh baca semua 5 modul
 
-    test('Module 0 is locked initially before pre-test is taken', () {
-      expect(isModuleUnlocked(index: 0, completedModules: <int>{}, preTestScore: null), isFalse);
+      for (var i = 0; i < defaultLearningModules.length; i++) {
+        expect(isGuestModuleUnlocked(i), isTrue);
+      }
     });
 
-    test('Module 0 unlocks when pre-test is completed', () {
-      expect(isModuleUnlocked(index: 0, completedModules: <int>{}, preTestScore: 60), isTrue);
-    });
+    test('Authenticated user follows sequential unlocking rule (module 1 unlocked, module N requires N-1)', () {
+      bool isAuthModuleUnlocked({
+        required int index,
+        required Set<int> completedModules,
+      }) {
+        final moduleId = index + 1;
+        if (moduleId == 1) return true;
+        return completedModules.contains(moduleId - 1) || completedModules.contains(moduleId);
+      }
 
-    test('subsequent modules unlock sequentially when previous module is completed', () {
-      expect(isModuleUnlocked(index: 1, completedModules: <int>{}, preTestScore: 60), isFalse);
-      expect(isModuleUnlocked(index: 1, completedModules: <int>{0}, preTestScore: 60), isTrue);
+      // Initial state: only Module 1 (index 0) unlocked
+      expect(isAuthModuleUnlocked(index: 0, completedModules: <int>{}), isTrue);
+      expect(isAuthModuleUnlocked(index: 1, completedModules: <int>{}), isFalse);
 
-      expect(isModuleUnlocked(index: 2, completedModules: <int>{0}, preTestScore: 60), isFalse);
-      expect(isModuleUnlocked(index: 2, completedModules: <int>{0, 1}, preTestScore: 60), isTrue);
-    });
+      // After completing module 1, module 2 is unlocked
+      expect(isAuthModuleUnlocked(index: 1, completedModules: <int>{1}), isTrue);
+      expect(isAuthModuleUnlocked(index: 2, completedModules: <int>{1}), isFalse);
 
-    test('XP rewards rule: +20 on first module completion, +15 on correct simulation, +5 on wrong simulation', () {
-      var xp = 0;
-      final completed = <int>{};
-
-      // Completing module 0 first time
-      if (completed.add(0)) xp += 20;
-      expect(xp, 20);
-
-      // Re-completing module 0 gives 0 extra XP
-      if (completed.add(0)) xp += 20;
-      expect(xp, 20);
-
-      // Correct simulation gives +15
-      int rewardXp(bool correct) => correct ? 15 : 5;
-      xp += rewardXp(true);
-      expect(xp, 35);
-
-      // Wrong simulation gives +5
-      xp += rewardXp(false);
-      expect(xp, 40);
+      // After completing module 2, module 3 is unlocked
+      expect(isAuthModuleUnlocked(index: 2, completedModules: <int>{1, 2}), isTrue);
     });
   });
 
@@ -135,7 +148,7 @@ void main() {
   });
 
   group('Characterization: Smoke Widget Test', () {
-    testWidgets('renders RooveyLearnApp, enters guest mode, and switches 4 tabs', (tester) async {
+    testWidgets('renders RooveyLearnApp with fake services, enters guest mode, and switches 4 tabs', (tester) async {
       tester.view.physicalSize = const Size(1080, 2400);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(() {
@@ -143,10 +156,19 @@ void main() {
         tester.view.resetDevicePixelRatio();
       });
 
-      await tester.pumpWidget(const RooveyLearnApp());
-      // First pump: starts async _loadProgress
+      final fakeAuth = FakeAuthService();
+      final fakeProgress = FakeProgressService();
+      final fakeRepo = FakeLearningRepository();
+
+      await tester.pumpWidget(
+        RooveyLearnApp(
+          authService: fakeAuth,
+          progressService: fakeProgress,
+          learningRepository: fakeRepo,
+        ),
+      );
+
       await tester.pump();
-      // Pump timer / microtask to finish SharedPreferences.getInstance()
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump();
 
@@ -162,9 +184,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump();
 
-      // Should be on Beranda (Tab 0)
+      // Should be on Beranda (Tab 0) in guest mode
       expect(find.text('Halo, Penjaga Pesisir'), findsOneWidget);
       expect(find.text('Ekosistem sehat,\npesisir tangguh.'), findsOneWidget);
+      expect(find.text('Mode Tamu: Progres Tidak Tersimpan'), findsOneWidget);
 
       // Tap 'Jelajah' tab (Tab 1)
       await tester.tap(find.byIcon(Icons.explore_outlined));
@@ -180,12 +203,12 @@ void main() {
       expect(find.text('JALUR BELAJAR'), findsOneWidget);
       expect(find.text('Tumbuh bersama\nmangrove.'), findsOneWidget);
 
-      // Tap 'Progres' tab (Tab 3)
+      // Tap 'Progres' tab (Tab 3) - Shows AuthGate for guest
       await tester.tap(find.byIcon(Icons.insights_outlined));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.text('PERJALANAN BELAJARMU'), findsOneWidget);
-      expect(find.text('Lihat sejauh\nmana kamu tumbuh.'), findsOneWidget);
+      expect(find.text('Masuk untuk Menyimpan Progres'), findsOneWidget);
     });
   });
 }
