@@ -417,3 +417,66 @@ Berdasarkan keputusan pemilik proyek, berikut panduan konfigurasi yang harus dia
 3. [`supabase/migrations/20261017000003_create_rpc_and_triggers.sql`](file:///home/aladlhusodriniwrad/development/rooveylearn_flutter/supabase/migrations/20261017000003_create_rpc_and_triggers.sql): Triggers, RPC `complete_module()`, `submit_quiz()`, `issue_certificate()`, `verify_certificate()`, dan penarikan/pemberian hak eksekusi fungsi (`REVOKE`/`GRANT`).
 4. [`supabase/migrations/20261017000004_seed_initial_data.sql`](file:///home/aladlhusodriniwrad/development/rooveylearn_flutter/supabase/migrations/20261017000004_seed_initial_data.sql): Seed data modul 1-5, materi, dan 5 butir soal kuis akhir asli.
 5. [`supabase/tests/rls_verification.sql`](file:///home/aladlhusodriniwrad/development/rooveylearn_flutter/supabase/tests/rls_verification.sql): Suite pengujian 9 skenario keamanan mandiri di SQL Editor.
+
+---
+
+## 9. Hasil Security Advisor & Analisis Risiko
+
+Saat skema database dievaluasi menggunakan **Supabase Database Linter / Security Advisor**, muncul 5 peringatan bertingkat `WARN` terkait fungsi yang dapat dieksekusi secara publik atau oleh pengguna terotentikasi.
+
+### 9.1 Daftar Peringatan Terdeteksi
+
+| Peringatan Linter / Security Advisor | Objek Fungsi | Role yang Memiliki Hak Akses | Status Desain |
+| :--- | :--- | :--- | :--- |
+| `anon_security_definer_function_executable` | `public.verify_certificate(text)` | `anon`, `authenticated` | **Disengaja (By Design)** |
+| `authenticated_security_definer_function_executable` | `public.complete_module(integer)` | `authenticated` | **Disengaja (By Design)** |
+| `authenticated_security_definer_function_executable` | `public.submit_quiz(text, integer, jsonb)` | `authenticated` | **Disengaja (By Design)** |
+| `authenticated_security_definer_function_executable` | `public.issue_certificate()` | `authenticated` | **Disengaja (By Design)** |
+| `authenticated_security_definer_function_executable` | `public.verify_certificate(text)` | `authenticated` | **Disengaja (By Design)** |
+
+---
+
+### 9.2 Rasional Desain: Mengapa Peringatan Ini Diterima (*Intentional*)
+
+Peringatan dari Supabase Security Advisor mengingatkan pengembang bahwa fungsi `SECURITY DEFINER` dapat dijalankan oleh role non-admin (`anon` atau `authenticated`), yang berpotensi berbahaya jika fungsi tersebut tidak diamankan dengan benar.
+
+Pada arsitektur RooveyLearn, kelima fungsi ini merupakan **jalur masuk resmi (*official entry points*)** bagi aplikasi mobile untuk berinteraksi dengan basis data melalui PostgREST RPC (`/rest/v1/rpc/<function_name>`):
+
+1. **Mengapa Hak Eksekusi Tidak Ditarik (`REVOKE`) dari `authenticated` atau `anon`?**
+   - Jika hak eksekusi dicabut (`REVOKE`) dari role `authenticated`, maka aplikasi Flutter klien tidak akan dapat mencatat penyelesaian modul, mengirim lembar jawaban kuis, maupun meminta penerbitan sertifikat. Klien akan menerima respon HTTP 403 Forbidden.
+   - Jika `verify_certificate` dicabut dari role `anon`, maka pihak eksternal (misal pemindai sertifikat publik atau lembaga mitra) tidak dapat memverifikasi keabsahan sertifikat peserta tanpa membuat akun terlebih dahulu.
+
+2. **Mengapa Fungsi Tidak Diubah Menjadi `SECURITY INVOKER`?**
+   - Prinsip arsitektur RooveyLearn adalah **Zero Client Trust**. Tabel sensitif seperti `quiz_answers` (kunci jawaban) sengaja **dibatasi total dari akses langsung klien** menggunakan RLS (tidak ada policy `SELECT`). Tabel `assessment_results` dan `certificates` juga sengaja **tidak memiliki policy `INSERT`/`UPDATE` untuk klien**.
+   - Jika fungsi diubah menjadi `SECURITY INVOKER`, fungsi akan berjalan dengan izin role pemanggil (`authenticated` / `anon`). Akibatnya, query di dalam RPC untuk membaca kunci jawaban atau menyimpan sertifikat akan **diblokir oleh RLS**, sehingga alur penilaian dan penerbitan sertifikat tidak dapat berfungsi.
+   - Oleh karena itu, fungsi **wajib** bertanda `SECURITY DEFINER` agar dapat mengeksekusi operasi terlindungi tersebut atas nama hak akses database owner.
+
+---
+
+### 9.3 Mitigasi Keamanan yang Sudah Diterapkan
+
+Mengingat fungsi `SECURITY DEFINER` berjalan dengan hak akses penuh pembuat fungsi, mitigasi berlapis telah diterapkan pada setiap fungsi:
+
+1. **Penguncian Search Path (`SET search_path = public, pg_temp;`)**:
+   - Seluruh fungsi `SECURITY DEFINER` secara eksplisit mengunci `search_path`. Ini mengeliminasi risiko *search path hijacking* atau eksekusi fungsi berbahaya yang disisipkan pada skema lain.
+2. **Validasi Wajib Sesi Pengguna (`auth.uid() IS NULL`)**:
+   - Fungsi privat (`complete_module`, `submit_quiz`, `issue_certificate`) diawali dengan validasi ketat:
+     `IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Akses ditolak...' USING ERRCODE = '42501'; END IF;`
+   - Ini mencegah eksekusi tanpa kredensial valid dan memastikan identitas pengguna diambil langsung dari JWT yang diverifikasi server, bukan dari input parameter klien.
+3. **Pencabutan Hak Default (`REVOKE FROM PUBLIC`)**:
+   - Hak eksekusi pada seluruh fungsi privat dicabut secara eksplisit dari role `PUBLIC` dan role `anon`, lalu hanya diberikan (`GRANT`) secara selektif kepada role `authenticated`.
+4. **Prinsip Minimasi Data pada `verify_certificate` (Keputusan 4)**:
+   - Fungsi verifikasi publik hanya mengembalikan status validitas dan informasi umum (`certificate_number`, `participant_name`, `program_name`, `issued_at`, `status`).
+   - Fungsi ini secara ketat **tidak mengembalikan** data privat seperti `user_id`, `email`, maupun nilai numerik ujian (`final_score`).
+
+---
+
+### 9.4 Catatan Tindak Lanjut (*Follow-up Action Item*)
+
+> [!IMPORTANT]
+> **Pemeriksaan Entropi Nomor Sertifikat**:
+> - Endpoint verifikasi publik `verify_certificate(cert_number)` dapat diakses oleh role `anon` tanpa autentikasi. Hal ini membuka potensi risiko serangan tebak nomor (*brute-force enumeration*) jika nomor sertifikat dapat diprediksi secara berurutan.
+> - **Rekomendasi Tindak Lanjut**: Perlu dilakukan pemeriksaan dan verifikasi lanjutan pada kode implementasi pembuatan nomor sertifikat di `issue_certificate()` untuk memastikan bahwa komponen acak pada nomor sertifikat (misal format `ROOVEY-YYYYMMDD-XXXXXX`) memiliki tingkat entropi yang memadai:
+>   - Minimal **8 karakter acak** yang dihasilkan dari sumber kriptografis yang aman (misalnya memanfaatkan `extensions.gen_random_bytes()` atau komponen UUID kriptografis), bukan dari urutan sekuensial sederhana atau generator pseudo-random biasa.
+>   - *Catatan*: Status pemenuhan batas minimal 8 karakter kriptografis ini perlu diperiksa langsung pada kode implementasi RPC sebelum tahap rilis produksi.
+

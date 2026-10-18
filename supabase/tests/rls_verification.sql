@@ -9,17 +9,18 @@
 BEGIN;
 
 -- ==============================================================================
--- 0. TABEL TEMPORER PENAMPUNG HASIL UJI
+-- 0. TABEL PENAMPUNG HASIL UJI (DIBUAT DALAM TRANSAKSI & DI-ROLLBACK DI AKHIR)
 -- ==============================================================================
-CREATE TEMP TABLE IF NOT EXISTS test_results (
+DROP TABLE IF EXISTS public.test_results;
+CREATE TABLE public.test_results (
     no INT,
     skenario TEXT,
     status TEXT, -- 'PASS' atau 'FAIL'
     keterangan TEXT
-) ON COMMIT DROP;
+);
 
--- Berikan izin akses pada tabel temporer untuk semua role selama pengujian
-GRANT ALL ON TABLE test_results TO anon, authenticated, public;
+-- Berikan izin akses pada tabel untuk semua role selama pengujian
+GRANT ALL ON TABLE public.test_results TO anon, authenticated, public;
 
 -- ==============================================================================
 -- SETUP: BUAT DATA DUMMY TEST (FIXTURES)
@@ -74,6 +75,9 @@ DECLARE
     v_count INT;
     v_error_caught BOOLEAN := false;
     v_public_cert JSONB;
+    v_checks_total INT := 0;
+    v_checks_passed INT := 0;
+    v_status TEXT;
 BEGIN
     -- Simulasikan role anon
     SET LOCAL ROLE anon;
@@ -83,16 +87,29 @@ BEGIN
 
     -- 1. Anon BISA membaca modul dan materi published
     SELECT COUNT(*) INTO v_count FROM public.learning_modules WHERE status = 'published';
-    ASSERT v_count >= 5, 'Anon gagal membaca modul published.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_count >= 5) THEN
+        RAISE EXCEPTION 'Assertion failed: Anon gagal membaca modul published. Ditemukan: %', v_count;
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     SELECT COUNT(*) INTO v_count FROM public.learning_materials WHERE status = 'published';
-    ASSERT v_count >= 5, 'Anon gagal membaca materi published.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_count >= 5) THEN
+        RAISE EXCEPTION 'Assertion failed: Anon gagal membaca materi published. Ditemukan: %', v_count;
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- 2. Anon BISA membaca pertanyaan kuis aktif (tanpa kunci)
     SELECT COUNT(*) INTO v_count FROM public.quiz_questions WHERE is_active = true;
-    ASSERT v_count >= 5, 'Anon gagal membaca daftar soal aktif.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_count >= 5) THEN
+        RAISE EXCEPTION 'Assertion failed: Anon gagal membaca daftar soal aktif. Ditemukan: %', v_count;
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- 3. Anon TIDAK BISA membaca tabel quiz_answers
+    v_error_caught := false;
     BEGIN
         SELECT COUNT(*) INTO v_count FROM public.quiz_answers;
         IF v_count > 0 THEN
@@ -101,20 +118,40 @@ BEGIN
     EXCEPTION WHEN insufficient_privilege THEN
         v_error_caught := true;
     END;
-    ASSERT v_error_caught = true, 'quiz_answers tidak memblokir akses anon.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_error_caught = true) THEN
+        RAISE EXCEPTION 'Assertion failed: quiz_answers tidak memblokir akses role anon.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- 4. Anon TIDAK BISA membaca data pengguna (profiles, progress, assessment_results, certificates)
     SELECT COUNT(*) INTO v_count FROM public.profiles;
-    ASSERT v_count = 0, 'Anon melihat data profiles.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_count = 0) THEN
+        RAISE EXCEPTION 'Assertion failed: Anon dapat melihat data profiles.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     SELECT COUNT(*) INTO v_count FROM public.user_module_progress;
-    ASSERT v_count = 0, 'Anon melihat user_module_progress.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_count = 0) THEN
+        RAISE EXCEPTION 'Assertion failed: Anon dapat melihat data user_module_progress.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     SELECT COUNT(*) INTO v_count FROM public.assessment_results;
-    ASSERT v_count = 0, 'Anon melihat assessment_results.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_count = 0) THEN
+        RAISE EXCEPTION 'Assertion failed: Anon dapat melihat data assessment_results.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     SELECT COUNT(*) INTO v_count FROM public.certificates;
-    ASSERT v_count = 0, 'Anon melihat certificates.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_count = 0) THEN
+        RAISE EXCEPTION 'Assertion failed: Anon dapat melihat data certificates.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- 5. Poin a: Anon DITOLAK eksekusi RPC privat
     v_error_caught := false;
@@ -123,7 +160,11 @@ BEGIN
     EXCEPTION WHEN insufficient_privilege THEN
         v_error_caught := true;
     END;
-    ASSERT v_error_caught = true, 'complete_module tidak menolak anon.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_error_caught = true) THEN
+        RAISE EXCEPTION 'Assertion failed: complete_module tidak menolak role anon.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     v_error_caught := false;
     BEGIN
@@ -131,7 +172,11 @@ BEGIN
     EXCEPTION WHEN insufficient_privilege THEN
         v_error_caught := true;
     END;
-    ASSERT v_error_caught = true, 'submit_quiz tidak menolak anon.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_error_caught = true) THEN
+        RAISE EXCEPTION 'Assertion failed: submit_quiz tidak menolak role anon.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     v_error_caught := false;
     BEGIN
@@ -139,19 +184,30 @@ BEGIN
     EXCEPTION WHEN insufficient_privilege THEN
         v_error_caught := true;
     END;
-    ASSERT v_error_caught = true, 'issue_certificate tidak menolak anon.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_error_caught = true) THEN
+        RAISE EXCEPTION 'Assertion failed: issue_certificate tidak menolak role anon.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- 6. Poin a: Anon DIIZINKAN eksekusi RPC verify_certificate
     v_public_cert := public.verify_certificate('ROOVEY-NONEXISTENT');
-    ASSERT (v_public_cert->>'valid')::BOOLEAN = false, 'verify_certificate gagal dieksekusi anon.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT ((v_public_cert->>'valid')::BOOLEAN = false) THEN
+        RAISE EXCEPTION 'Assertion failed: verify_certificate gagal dieksekusi role anon.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
+
+    -- Evaluasi status: HANYA PASS jika seluruh 12 assertion benar-benar tereksekusi dan lolos
+    IF v_checks_passed = v_checks_total AND v_checks_total = 12 THEN
+        v_status := 'PASS';
+    ELSE
+        RAISE EXCEPTION 'Inkonsistensi assertion: hanya % dari % pengecekan tercapai', v_checks_passed, v_checks_total;
+    END IF;
 
     RESET ROLE;
-    INSERT INTO test_results (no, skenario, status, keterangan)
-    VALUES (1, 'Hak Akses Role Anon (Tabel & RPC Grants)', 'PASS', 'Anon diblokir dari data pengguna & RPC privat; diizinkan baca materi & verifikasi sertifikat.');
-EXCEPTION WHEN OTHERS THEN
-    RESET ROLE;
-    INSERT INTO test_results (no, skenario, status, keterangan)
-    VALUES (1, 'Hak Akses Role Anon (Tabel & RPC Grants)', 'FAIL', SQLERRM);
+    EXECUTE 'INSERT INTO public.test_results (no, skenario, status, keterangan) VALUES ($1, $2, $3, $4)'
+    USING 1, 'Hak Akses Role Anon (Tabel & RPC Grants)', v_status, 'Lolos seluruh 12 assertion: Anon diblokir dari data pengguna & RPC privat; diizinkan baca materi & verifikasi sertifikat.';
 END;
 $$;
 
@@ -165,6 +221,9 @@ DECLARE
     v_count INT;
     v_rows_affected INT;
     v_error_caught BOOLEAN := false;
+    v_checks_total INT := 0;
+    v_checks_passed INT := 0;
+    v_status TEXT;
 BEGIN
     RESET ROLE;
     INSERT INTO public.user_module_progress (user_id, module_id, status, progress_percent)
@@ -179,19 +238,35 @@ BEGIN
 
     -- 1. User A hanya membaca profil miliknya
     SELECT COUNT(*) INTO v_count FROM public.profiles;
-    ASSERT v_count = 1, 'User A melihat lebih dari 1 profil.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_count = 1) THEN
+        RAISE EXCEPTION 'Assertion failed: User A melihat lebih dari 1 profil. Total: %', v_count;
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     SELECT COUNT(*) INTO v_count FROM public.profiles WHERE id = v_user_b;
-    ASSERT v_count = 0, 'User A bisa melihat profil User B.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_count = 0) THEN
+        RAISE EXCEPTION 'Assertion failed: User A bisa melihat profil User B.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- 2. User A tidak bisa membaca progres User B
     SELECT COUNT(*) INTO v_count FROM public.user_module_progress WHERE user_id = v_user_b;
-    ASSERT v_count = 0, 'User A bisa melihat progres User B.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_count = 0) THEN
+        RAISE EXCEPTION 'Assertion failed: User A bisa melihat progres User B.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- 3. User A mencoba UPDATE progres User B -> 0 rows affected
     UPDATE public.user_module_progress SET progress_percent = 100 WHERE user_id = v_user_b;
     GET DIAGNOSTICS v_rows_affected = ROW_COUNT;
-    ASSERT v_rows_affected = 0, 'User A berhasil mengupdate progres User B.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_rows_affected = 0) THEN
+        RAISE EXCEPTION 'Assertion failed: User A berhasil mengupdate progres User B (baris terpengaruh: %)', v_rows_affected;
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- 4. User A membuat progres miliknya
     INSERT INTO public.user_module_progress (user_id, module_id, status, progress_percent)
@@ -207,7 +282,11 @@ BEGIN
     EXCEPTION WHEN check_violation OR insufficient_privilege THEN
         v_error_caught := true;
     END;
-    ASSERT v_error_caught = true, 'RLS tidak memblokir penulisan langsung status completed.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_error_caught = true) THEN
+        RAISE EXCEPTION 'Assertion failed: RLS tidak memblokir penulisan langsung status completed.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- 6. User A mencoba mutasi user_id atau module_id -> Ditolak Trigger
     v_error_caught := false;
@@ -218,7 +297,11 @@ BEGIN
     EXCEPTION WHEN SQLSTATE '42501' THEN
         v_error_caught := true;
     END;
-    ASSERT v_error_caught = true, 'Trigger tidak memblokir mutasi user_id.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_error_caught = true) THEN
+        RAISE EXCEPTION 'Assertion failed: Trigger tidak memblokir mutasi user_id.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     v_error_caught := false;
     BEGIN
@@ -228,15 +311,22 @@ BEGIN
     EXCEPTION WHEN SQLSTATE '42501' THEN
         v_error_caught := true;
     END;
-    ASSERT v_error_caught = true, 'Trigger tidak memblokir mutasi module_id.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_error_caught = true) THEN
+        RAISE EXCEPTION 'Assertion failed: Trigger tidak memblokir mutasi module_id.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
+
+    -- Evaluasi status: HANYA PASS jika seluruh 7 assertion benar-benar tereksekusi dan lolos
+    IF v_checks_passed = v_checks_total AND v_checks_total = 7 THEN
+        v_status := 'PASS';
+    ELSE
+        RAISE EXCEPTION 'Inkonsistensi assertion: hanya % dari % pengecekan tercapai', v_checks_passed, v_checks_total;
+    END IF;
 
     RESET ROLE;
-    INSERT INTO test_results (no, skenario, status, keterangan)
-    VALUES (2, 'Isolasi Pengguna & Proteksi Mutasi Progress (Poin f)', 'PASS', 'User A terisolasi dari User B; mutasi user_id, module_id, dan status completed diblokir.');
-EXCEPTION WHEN OTHERS THEN
-    RESET ROLE;
-    INSERT INTO test_results (no, skenario, status, keterangan)
-    VALUES (2, 'Isolasi Pengguna & Proteksi Mutasi Progress (Poin f)', 'FAIL', SQLERRM);
+    EXECUTE 'INSERT INTO public.test_results (no, skenario, status, keterangan) VALUES ($1, $2, $3, $4)'
+    USING 2, 'Isolasi Pengguna & Proteksi Mutasi Progress (Poin f)', v_status, 'Lolos seluruh 7 assertion: User A terisolasi dari User B; mutasi user_id, module_id, dan status completed diblokir.';
 END;
 $$;
 
@@ -247,6 +337,9 @@ DO $$
 DECLARE
     v_user_a UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
     v_blocked BOOLEAN := false;
+    v_checks_total INT := 0;
+    v_checks_passed INT := 0;
+    v_status TEXT;
 BEGIN
     SET LOCAL ROLE authenticated;
     PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_a, 'role', 'authenticated')::text, true);
@@ -263,7 +356,11 @@ BEGIN
     EXCEPTION WHEN insufficient_privilege OR check_violation THEN
         v_blocked := true;
     END;
-    ASSERT v_blocked = true, 'RLS tidak memblokir INSERT langsung ke assessment_results.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_blocked = true) THEN
+        RAISE EXCEPTION 'Assertion failed: RLS tidak memblokir INSERT langsung ke assessment_results.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- 2. Coba INSERT langsung ke certificates
     v_blocked := false;
@@ -276,15 +373,22 @@ BEGIN
     EXCEPTION WHEN insufficient_privilege OR check_violation THEN
         v_blocked := true;
     END;
-    ASSERT v_blocked = true, 'RLS tidak memblokir INSERT langsung ke certificates.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_blocked = true) THEN
+        RAISE EXCEPTION 'Assertion failed: RLS tidak memblokir INSERT langsung ke certificates.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
+
+    -- Evaluasi status: HANYA PASS jika seluruh 2 assertion benar-benar tereksekusi dan lolos
+    IF v_checks_passed = v_checks_total AND v_checks_total = 2 THEN
+        v_status := 'PASS';
+    ELSE
+        RAISE EXCEPTION 'Inkonsistensi assertion: hanya % dari % pengecekan tercapai', v_checks_passed, v_checks_total;
+    END IF;
 
     RESET ROLE;
-    INSERT INTO test_results (no, skenario, status, keterangan)
-    VALUES (3, 'Blokir INSERT Langsung Hasil & Sertifikat', 'PASS', 'Klien diblokir dari INSERT langsung ke assessment_results dan certificates.');
-EXCEPTION WHEN OTHERS THEN
-    RESET ROLE;
-    INSERT INTO test_results (no, skenario, status, keterangan)
-    VALUES (3, 'Blokir INSERT Langsung Hasil & Sertifikat', 'FAIL', SQLERRM);
+    EXECUTE 'INSERT INTO public.test_results (no, skenario, status, keterangan) VALUES ($1, $2, $3, $4)'
+    USING 3, 'Blokir INSERT Langsung Hasil & Sertifikat', v_status, 'Lolos seluruh 2 assertion: Klien diblokir dari INSERT langsung ke assessment_results dan certificates.';
 END;
 $$;
 
@@ -299,6 +403,9 @@ DECLARE
     v_partial_answer JSONB;
     v_duplicate_answer JSONB;
     v_invalid_qid_answer JSONB;
+    v_checks_total INT := 0;
+    v_checks_passed INT := 0;
+    v_status TEXT;
 BEGIN
     SET LOCAL ROLE authenticated;
     PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_a, 'role', 'authenticated')::text, true);
@@ -317,7 +424,11 @@ BEGIN
     EXCEPTION WHEN SQLSTATE '22023' THEN
         v_error_caught := true;
     END;
-    ASSERT v_error_caught = true, 'submit_quiz tidak menolak soal duplikat.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_error_caught = true) THEN
+        RAISE EXCEPTION 'Assertion failed: submit_quiz tidak menolak soal duplikat.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- 2. Poin c: Tolak jika ID soal tidak terdaftar pada paket kuis
     v_invalid_qid_answer := '[
@@ -330,7 +441,11 @@ BEGIN
     EXCEPTION WHEN SQLSTATE '22023' THEN
         v_error_caught := true;
     END;
-    ASSERT v_error_caught = true, 'submit_quiz tidak menolak ID soal asing.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_error_caught = true) THEN
+        RAISE EXCEPTION 'Assertion failed: submit_quiz tidak menolak ID soal asing.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- 3. Poin c: Kirim 1 jawaban benar dari 5 soal di bank -> menghasilkan skor 20%
     v_partial_answer := '[
@@ -339,17 +454,34 @@ BEGIN
 
     v_res := public.submit_quiz('pretest', NULL, v_partial_answer);
 
-    ASSERT (v_res->>'total_questions')::INT = 5, 'Total soal seharusnya 5 (sesuai bank).';
-    ASSERT (v_res->>'correct_answers')::INT = 1, 'Jumlah benar seharusnya 1.';
-    ASSERT (v_res->>'score')::INT = 20, 'Skor 1 benar dari 5 soal seharusnya 20%.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT ((v_res->>'total_questions')::INT = 5) THEN
+        RAISE EXCEPTION 'Assertion failed: Total soal seharusnya 5 (sesuai bank). Diterima: %', (v_res->>'total_questions');
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
+
+    v_checks_total := v_checks_total + 1;
+    IF NOT ((v_res->>'correct_answers')::INT = 1) THEN
+        RAISE EXCEPTION 'Assertion failed: Jumlah benar seharusnya 1. Diterima: %', (v_res->>'correct_answers');
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
+
+    v_checks_total := v_checks_total + 1;
+    IF NOT ((v_res->>'score')::INT = 20) THEN
+        RAISE EXCEPTION 'Assertion failed: Skor 1 benar dari 5 soal seharusnya 20%%. Diterima: %', (v_res->>'score');
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
+
+    -- Evaluasi status: HANYA PASS jika seluruh 5 assertion benar-benar tereksekusi dan lolos
+    IF v_checks_passed = v_checks_total AND v_checks_total = 5 THEN
+        v_status := 'PASS';
+    ELSE
+        RAISE EXCEPTION 'Inkonsistensi assertion: hanya % dari % pengecekan tercapai', v_checks_passed, v_checks_total;
+    END IF;
 
     RESET ROLE;
-    INSERT INTO test_results (no, skenario, status, keterangan)
-    VALUES (4, 'Validasi Payload & Skor dari Bank Soal (Poin c)', 'PASS', 'Tolak duplikat & ID asing; 1 benar dari 5 soal bank menghasilkan skor 20%.');
-EXCEPTION WHEN OTHERS THEN
-    RESET ROLE;
-    INSERT INTO test_results (no, skenario, status, keterangan)
-    VALUES (4, 'Validasi Payload & Skor dari Bank Soal (Poin c)', 'FAIL', SQLERRM);
+    EXECUTE 'INSERT INTO public.test_results (no, skenario, status, keterangan) VALUES ($1, $2, $3, $4)'
+    USING 4, 'Validasi Payload & Skor dari Bank Soal (Poin c)', v_status, 'Lolos seluruh 5 assertion: Tolak duplikat & ID asing; 1 benar dari 5 soal bank menghasilkan skor 20%.';
 END;
 $$;
 
@@ -361,6 +493,9 @@ DECLARE
     v_user_a UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
     v_exception_caught BOOLEAN := false;
     v_res JSONB;
+    v_checks_total INT := 0;
+    v_checks_passed INT := 0;
+    v_status TEXT;
 BEGIN
     SET LOCAL ROLE authenticated;
     PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_a, 'role', 'authenticated')::text, true);
@@ -373,23 +508,38 @@ BEGIN
     EXCEPTION WHEN SQLSTATE 'P0001' THEN
         v_exception_caught := true;
     END;
-    ASSERT v_exception_caught = true, 'Melompati urutan modul tidak ditolak.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_exception_caught = true) THEN
+        RAISE EXCEPTION 'Assertion failed: Melompati urutan modul tidak ditolak.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- 2. Selesaikan Modul 1
     v_res := public.complete_module(1);
-    ASSERT (v_res->>'success')::BOOLEAN = true, 'Gagal menyelesaikan modul 1.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT ((v_res->>'success')::BOOLEAN = true) THEN
+        RAISE EXCEPTION 'Assertion failed: Gagal menyelesaikan modul 1.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- 3. Selesaikan Modul 2
     v_res := public.complete_module(2);
-    ASSERT (v_res->>'success')::BOOLEAN = true, 'Gagal menyelesaikan modul 2.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT ((v_res->>'success')::BOOLEAN = true) THEN
+        RAISE EXCEPTION 'Assertion failed: Gagal menyelesaikan modul 2.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
+
+    -- Evaluasi status: HANYA PASS jika seluruh 3 assertion benar-benar tereksekusi dan lolos
+    IF v_checks_passed = v_checks_total AND v_checks_total = 3 THEN
+        v_status := 'PASS';
+    ELSE
+        RAISE EXCEPTION 'Inkonsistensi assertion: hanya % dari % pengecekan tercapai', v_checks_passed, v_checks_total;
+    END IF;
 
     RESET ROLE;
-    INSERT INTO test_results (no, skenario, status, keterangan)
-    VALUES (5, 'Penegakan Urutan Modul Bertahap', 'PASS', 'Melompati modul ditolak; modul 1 dan 2 selesai berurutan.');
-EXCEPTION WHEN OTHERS THEN
-    RESET ROLE;
-    INSERT INTO test_results (no, skenario, status, keterangan)
-    VALUES (5, 'Penegakan Urutan Modul Bertahap', 'FAIL', SQLERRM);
+    EXECUTE 'INSERT INTO public.test_results (no, skenario, status, keterangan) VALUES ($1, $2, $3, $4)'
+    USING 5, 'Penegakan Urutan Modul Bertahap', v_status, 'Lolos seluruh 3 assertion: Melompati modul ditolak; modul 1 dan 2 selesai berurutan.';
 END;
 $$;
 
@@ -402,6 +552,9 @@ DECLARE
     v_exception_caught BOOLEAN := false;
     v_answers JSONB;
     v_res JSONB;
+    v_checks_total INT := 0;
+    v_checks_passed INT := 0;
+    v_status TEXT;
 BEGIN
     SET LOCAL ROLE authenticated;
     PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_a, 'role', 'authenticated')::text, true);
@@ -419,7 +572,11 @@ BEGIN
     EXCEPTION WHEN SQLSTATE 'P0001' THEN
         v_exception_caught := true;
     END;
-    ASSERT v_exception_caught = true, 'submit_quiz(final) tidak menolak modul < 5.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_exception_caught = true) THEN
+        RAISE EXCEPTION 'Assertion failed: submit_quiz(final) tidak menolak modul < 5.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- Selesaikan Modul 3, 4, 5
     PERFORM public.complete_module(3);
@@ -428,15 +585,22 @@ BEGIN
 
     -- Setelah seluruh 5 modul selesai, kuis akhir diizinkan
     v_res := public.submit_quiz('final', NULL, v_answers);
-    ASSERT (v_res->>'quiz_type') = 'final', 'submit_quiz(final) gagal setelah 5 modul tuntas.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT ((v_res->>'quiz_type') = 'final') THEN
+        RAISE EXCEPTION 'Assertion failed: submit_quiz(final) gagal setelah 5 modul tuntas.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
+
+    -- Evaluasi status: HANYA PASS jika seluruh 2 assertion benar-benar tereksekusi dan lolos
+    IF v_checks_passed = v_checks_total AND v_checks_total = 2 THEN
+        v_status := 'PASS';
+    ELSE
+        RAISE EXCEPTION 'Inkonsistensi assertion: hanya % dari % pengecekan tercapai', v_checks_passed, v_checks_total;
+    END IF;
 
     RESET ROLE;
-    INSERT INTO test_results (no, skenario, status, keterangan)
-    VALUES (6, 'Prasyarat 5 Modul untuk Kuis Akhir (Poin d)', 'PASS', 'Kuis akhir ditolak saat modul < 5; diizinkan setelah kelima modul berstatus completed.');
-EXCEPTION WHEN OTHERS THEN
-    RESET ROLE;
-    INSERT INTO test_results (no, skenario, status, keterangan)
-    VALUES (6, 'Prasyarat 5 Modul untuk Kuis Akhir (Poin d)', 'FAIL', SQLERRM);
+    EXECUTE 'INSERT INTO public.test_results (no, skenario, status, keterangan) VALUES ($1, $2, $3, $4)'
+    USING 6, 'Prasyarat 5 Modul untuk Kuis Akhir (Poin d)', v_status, 'Lolos seluruh 2 assertion: Kuis akhir ditolak saat modul < 5; diizinkan setelah kelima modul berstatus completed.';
 END;
 $$;
 
@@ -449,6 +613,9 @@ DECLARE
     v_answers JSONB;
     v_exception_caught BOOLEAN := false;
     v_i INT;
+    v_checks_total INT := 0;
+    v_checks_passed INT := 0;
+    v_status TEXT;
 BEGIN
     RESET ROLE;
     DELETE FROM public.assessment_results WHERE user_id = v_user_a AND assessment_type = 'final';
@@ -466,6 +633,11 @@ BEGIN
     FOR v_i IN 1..3 LOOP
         PERFORM public.submit_quiz('final', NULL, v_answers);
     END LOOP;
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_i = 4) THEN
+        RAISE EXCEPTION 'Assertion failed: 3 percobaan kuis awal tidak selesai.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- Percobaan ke-4 dalam 24 jam harus DITOLAK dengan kode P0003
     v_exception_caught := false;
@@ -474,15 +646,22 @@ BEGIN
     EXCEPTION WHEN SQLSTATE 'P0003' THEN
         v_exception_caught := true;
     END;
-    ASSERT v_exception_caught = true, 'Percobaan ke-4 tidak memicu limit exception P0003.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_exception_caught = true) THEN
+        RAISE EXCEPTION 'Assertion failed: Percobaan ke-4 tidak memicu limit exception P0003.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
+
+    -- Evaluasi status: HANYA PASS jika seluruh 2 assertion benar-benar tereksekusi dan lolos
+    IF v_checks_passed = v_checks_total AND v_checks_total = 2 THEN
+        v_status := 'PASS';
+    ELSE
+        RAISE EXCEPTION 'Inkonsistensi assertion: hanya % dari % pengecekan tercapai', v_checks_passed, v_checks_total;
+    END IF;
 
     RESET ROLE;
-    INSERT INTO test_results (no, skenario, status, keterangan)
-    VALUES (7, 'Pembatasan 3 Percobaan Kuis Akhir / 24 Jam (Poin e)', 'PASS', 'Percobaan ke-1 s/d 3 diizinkan; percobaan ke-4 ditolak dengan exception P0003.');
-EXCEPTION WHEN OTHERS THEN
-    RESET ROLE;
-    INSERT INTO test_results (no, skenario, status, keterangan)
-    VALUES (7, 'Pembatasan 3 Percobaan Kuis Akhir / 24 Jam (Poin e)', 'FAIL', SQLERRM);
+    EXECUTE 'INSERT INTO public.test_results (no, skenario, status, keterangan) VALUES ($1, $2, $3, $4)'
+    USING 7, 'Pembatasan 3 Percobaan Kuis Akhir / 24 Jam (Poin e)', v_status, 'Lolos seluruh 2 assertion: Percobaan ke-1 s/d 3 diizinkan; percobaan ke-4 ditolak dengan exception P0003.';
 END;
 $$;
 
@@ -495,6 +674,9 @@ DECLARE
     v_res JSONB;
     v_cert_record RECORD;
     v_exception_caught BOOLEAN := false;
+    v_checks_total INT := 0;
+    v_checks_passed INT := 0;
+    v_status TEXT;
 BEGIN
     RESET ROLE;
     DELETE FROM public.certificates WHERE user_id = v_user_a;
@@ -519,7 +701,11 @@ BEGIN
     EXCEPTION WHEN SQLSTATE 'P0001' THEN
         v_exception_caught := true;
     END;
-    ASSERT v_exception_caught = true, 'issue_certificate tidak menolak skor 79%.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_exception_caught = true) THEN
+        RAISE EXCEPTION 'Assertion failed: issue_certificate tidak menolak skor 79%%.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- 2. Simulasi pencapaian nilai kelulusan = 80% (Best Score)
     RESET ROLE;
@@ -536,14 +722,20 @@ BEGIN
 
     -- Terbitkan sertifikat -> Berhasil
     v_res := public.issue_certificate();
-    ASSERT (v_res->>'success')::BOOLEAN = true, 'issue_certificate gagal menerbitkan sertifikat.';
-    ASSERT (v_res->'certificate'->>'final_score')::INT = 80, 'Nilai sertifikat tidak sesuai nilai terbaik.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT ((v_res->>'success')::BOOLEAN = true AND (v_res->'certificate'->>'final_score')::INT = 80) THEN
+        RAISE EXCEPTION 'Assertion failed: issue_certificate gagal menerbitkan sertifikat dengan nilai terbaik 80.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- Verifikasi kolom assessment_result_id pada tabel certificates tercatat
     RESET ROLE;
     SELECT * INTO v_cert_record FROM public.certificates WHERE user_id = v_user_a AND status = 'active';
-    ASSERT v_cert_record.assessment_result_id IS NOT NULL, 'assessment_result_id tidak tercatat pada certificates.';
-    ASSERT v_cert_record.final_score = 80, 'final_score pada certificates salah.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT (v_cert_record.assessment_result_id IS NOT NULL AND v_cert_record.final_score = 80) THEN
+        RAISE EXCEPTION 'Assertion failed: assessment_result_id atau final_score salah pada tabel certificates.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- Idempotensi: Panggilan kedua mengembalikan sertifikat aktif yang sama
     SET LOCAL ROLE authenticated;
@@ -552,15 +744,22 @@ BEGIN
     PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
 
     v_res := public.issue_certificate();
-    ASSERT (v_res->>'is_new')::BOOLEAN = false, 'Penerbitan kedua seharusnya mengembalikan sertifikat aktif.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT ((v_res->>'is_new')::BOOLEAN = false) THEN
+        RAISE EXCEPTION 'Assertion failed: Penerbitan kedua seharusnya mengembalikan sertifikat aktif (is_new = false).';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
+
+    -- Evaluasi status: HANYA PASS jika seluruh 4 assertion benar-benar tereksekusi dan lolos
+    IF v_checks_passed = v_checks_total AND v_checks_total = 4 THEN
+        v_status := 'PASS';
+    ELSE
+        RAISE EXCEPTION 'Inkonsistensi assertion: hanya % dari % pengecekan tercapai', v_checks_passed, v_checks_total;
+    END IF;
 
     RESET ROLE;
-    INSERT INTO test_results (no, skenario, status, keterangan)
-    VALUES (8, 'Penerbitan Sertifikat Berbasis Nilai Terbaik (Keputusan 1)', 'PASS', 'Skor 79 ditolak; skor 80 diterima; assessment_result_id tercatat; pemanggilan berulang idempotent.');
-EXCEPTION WHEN OTHERS THEN
-    RESET ROLE;
-    INSERT INTO test_results (no, skenario, status, keterangan)
-    VALUES (8, 'Penerbitan Sertifikat Berbasis Nilai Terbaik (Keputusan 1)', 'FAIL', SQLERRM);
+    EXECUTE 'INSERT INTO public.test_results (no, skenario, status, keterangan) VALUES ($1, $2, $3, $4)'
+    USING 8, 'Penerbitan Sertifikat Berbasis Nilai Terbaik (Keputusan 1)', v_status, 'Lolos seluruh 4 assertion: Skor 79 ditolak; skor 80 diterima; assessment_result_id tercatat; pemanggilan berulang idempotent.';
 END;
 $$;
 
@@ -572,6 +771,9 @@ DECLARE
     v_user_a UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
     v_cert_num TEXT;
     v_verify_res JSONB;
+    v_checks_total INT := 0;
+    v_checks_passed INT := 0;
+    v_status TEXT;
 BEGIN
     SELECT certificate_number INTO v_cert_num FROM public.certificates WHERE user_id = v_user_a AND status = 'active';
 
@@ -583,25 +785,41 @@ BEGIN
 
     v_verify_res := public.verify_certificate(v_cert_num);
 
-    ASSERT (v_verify_res->>'valid')::BOOLEAN = true, 'Sertifikat valid gagal diverifikasi publik.';
-    ASSERT (v_verify_res->>'participant_name') = 'Peserta A', 'Nama peserta salah.';
-    ASSERT (v_verify_res->>'program_name') = 'Dasar Pengelolaan Mangrove', 'Nama program salah.';
-    ASSERT (v_verify_res ? 'certificate_number') = true, 'certificate_number tidak ada.';
-    ASSERT (v_verify_res ? 'issued_at') = true, 'issued_at tidak ada.';
-    ASSERT (v_verify_res ? 'status') = true, 'status tidak ada.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT ((v_verify_res->>'valid')::BOOLEAN = true) THEN
+        RAISE EXCEPTION 'Assertion failed: Sertifikat valid gagal diverifikasi publik.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
+
+    v_checks_total := v_checks_total + 1;
+    IF NOT ((v_verify_res->>'participant_name') = 'Peserta A' AND (v_verify_res->>'program_name') = 'Dasar Pengelolaan Mangrove') THEN
+        RAISE EXCEPTION 'Assertion failed: Data nama peserta atau nama program tidak sesuai.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
+
+    v_checks_total := v_checks_total + 1;
+    IF NOT ((v_verify_res ? 'certificate_number') AND (v_verify_res ? 'issued_at') AND (v_verify_res ? 'status')) THEN
+        RAISE EXCEPTION 'Assertion failed: Atribut sertifikat publik tidak lengkap.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
 
     -- Keputusan 4: Pastikan TIDAK ADA user_id, email, atau nilai numerik yang bocor
-    ASSERT (v_verify_res ? 'user_id') = false, 'KEAMANAN JEBOL: user_id bocor di verifikasi publik.';
-    ASSERT (v_verify_res ? 'email') = false, 'KEAMANAN JEBOL: email bocor di verifikasi publik.';
-    ASSERT (v_verify_res ? 'final_score') = false, 'KEAMANAN JEBOL: nilai ujian bocor di verifikasi publik.';
+    v_checks_total := v_checks_total + 1;
+    IF NOT ((v_verify_res ? 'user_id') = false AND (v_verify_res ? 'email') = false AND (v_verify_res ? 'final_score') = false) THEN
+        RAISE EXCEPTION 'Assertion failed: Kebocoran data privat terdeteksi pada RPC verify_certificate.';
+    END IF;
+    v_checks_passed := v_checks_passed + 1;
+
+    -- Evaluasi status: HANYA PASS jika seluruh 4 assertion benar-benar tereksekusi dan lolos
+    IF v_checks_passed = v_checks_total AND v_checks_total = 4 THEN
+        v_status := 'PASS';
+    ELSE
+        RAISE EXCEPTION 'Inkonsistensi assertion: hanya % dari % pengecekan tercapai', v_checks_passed, v_checks_total;
+    END IF;
 
     RESET ROLE;
-    INSERT INTO test_results (no, skenario, status, keterangan)
-    VALUES (9, 'Verifikasi Publik Sertifikat Terbatas (Keputusan 4)', 'PASS', 'Verifikasi berhasil tanpa membocorkan user_id, email, atau nilai numerik.');
-EXCEPTION WHEN OTHERS THEN
-    RESET ROLE;
-    INSERT INTO test_results (no, skenario, status, keterangan)
-    VALUES (9, 'Verifikasi Publik Sertifikat Terbatas (Keputusan 4)', 'FAIL', SQLERRM);
+    EXECUTE 'INSERT INTO public.test_results (no, skenario, status, keterangan) VALUES ($1, $2, $3, $4)'
+    USING 9, 'Verifikasi Publik Sertifikat Terbatas (Keputusan 4)', v_status, 'Lolos seluruh 4 assertion: Verifikasi berhasil tanpa membocorkan user_id, email, atau nilai numerik.';
 END;
 $$;
 
@@ -613,7 +831,7 @@ SELECT
     skenario AS "Skenario Uji",
     status AS "Status",
     keterangan AS "Keterangan"
-FROM test_results
+FROM public.test_results
 ORDER BY no ASC;
 
 -- ==============================================================================
