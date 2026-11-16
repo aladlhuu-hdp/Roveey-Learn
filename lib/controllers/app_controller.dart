@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import '../core/utils/app_error_mapper.dart';
 import '../models/learning_module.dart';
 import '../models/quiz_question.dart';
 import '../models/user_profile.dart';
@@ -110,7 +111,7 @@ class AppController extends ChangeNotifier {
       }
     } catch (e) {
       debugPrint('AppController: gagal inisialisasi: $e');
-      _errorMessage = e.toString();
+      _errorMessage = AppErrorMapper.toUserMessage(e);
     } finally {
       _isLoading = false;
       notifyListeners();

@@ -113,7 +113,12 @@ class _AppShellState extends State<AppShell> {
       return;
     }
 
-    if (controller.preTestScore != null) return;
+    if (controller.preTestScore != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Pre-test sudah kamu selesaikan.')),
+      );
+      return;
+    }
 
     Navigator.of(context).push(
       MaterialPageRoute<void>(

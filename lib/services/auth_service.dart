@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/user_profile.dart';
 
@@ -45,8 +46,9 @@ class SupabaseAuthService implements AuthService {
           createdAt: data['created_at']?.toString() ?? user.createdAt,
         );
       }
-    } catch (_) {
+    } catch (e) {
       // Fallback to auth metadata if network or profile query fails
+      debugPrint('SupabaseAuthService: gagal memuat profil: $e');
     }
 
     final metaName = user.userMetadata?['name']?.toString();

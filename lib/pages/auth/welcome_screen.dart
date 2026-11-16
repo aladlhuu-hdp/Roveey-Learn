@@ -82,7 +82,7 @@ class WelcomeScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 7),
                 const Text(
-                  'Akun dan progres tersimpan lokal di perangkat ini.',
+                  'Akun dan progres tersimpan di server RooveyLearn.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: AppColors.muted, fontSize: 10),
                 ),

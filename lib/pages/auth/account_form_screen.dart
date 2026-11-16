@@ -249,7 +249,7 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
                             onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
                                 content: Text(
-                                    'Kata sandi lokal tidak dapat dipulihkan. Kata sandi tidak disimpan oleh aplikasi.'),
+                                    'Fitur reset kata sandi akan segera hadir. Hubungi admin RooveyLearn jika perlu bantuan.'),
                               ),
                             ),
                             child: const Text('Lupa kata sandi?'),
@@ -321,7 +321,7 @@ class _AccountFormScreenState extends State<AccountFormScreen> {
                       SizedBox(width: 9),
                       Expanded(
                         child: Text(
-                          'Akun tersimpan hanya di perangkat ini. Kata sandi tidak disimpan, dan akun tidak tersinkron ke server.',
+                          'Akun dan progres tersimpan aman di server RooveyLearn (Supabase) dan terhubung ke akunmu.',
                           style: TextStyle(color: AppColors.forestDeep, fontSize: 11, height: 1.4),
                         ),
                       ),
